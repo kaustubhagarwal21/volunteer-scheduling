@@ -1,0 +1,35 @@
+# Optional. The demo data is relative to the day it was seeded ("this week", alerts in the next
+# three days), so it goes stale. This refreshes the live demo database every Monday morning (IST),
+# or on demand from the Actions tab. It WIPES the database, including anything reviewers changed.
+# Does nothing until a repository secret named DEMO_DATABASE_URL is added.
+name: Reseed demo data
+
+on:
+  schedule:
+    - cron: '30 23 * * 0' # 05:00 IST every Monday
+  workflow_dispatch:
+
+jobs:
+  reseed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip unless the demo database is configured
+        id: guard
+        env:
+          DEMO_DATABASE_URL: ${{ secrets.DEMO_DATABASE_URL }}
+        run: echo "configured=$([ -n "$DEMO_DATABASE_URL" ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.configured == 'yes'
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.configured == 'yes'
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - if: steps.guard.outputs.configured == 'yes'
+        run: npm ci
+      - if: steps.guard.outputs.configured == 'yes'
+        env:
+          DATABASE_URL: ${{ secrets.DEMO_DATABASE_URL }}
+          ORG_TIMEZONE: Asia/Kolkata
+          ALLOW_REMOTE_RESET: 'yes'
+        run: npm run seed

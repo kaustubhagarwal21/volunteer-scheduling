@@ -1,0 +1,20 @@
+# Render blueprint: one free web service that serves both the API and the built React app.
+# The database is external (Neon); paste its connection string as DATABASE_URL in the dashboard.
+services:
+  - type: web
+    name: volunteer-scheduling
+    runtime: node
+    plan: free
+    region: singapore # closest free region to the organisation (Asia/Kolkata)
+    # NODE_ENV=production makes npm skip devDependencies, but the build needs tsc and vite.
+    buildCommand: npm ci --include=dev && npm run build
+    # Pending migrations run automatically when the server starts.
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ORG_TIMEZONE
+        value: Asia/Kolkata
+      - key: DATABASE_URL
+        sync: false # secret: set it in the Render dashboard, never in the repository

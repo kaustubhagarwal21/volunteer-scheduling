@@ -1,5 +1,6 @@
 /**
- * Resets the database and fills it with demo data: `npm run seed`.
+ * Resets the database and fills it with demo data: `npm run seed`. Against anything other than
+ * localhost it also needs ALLOW_REMOTE_RESET=yes.
  *
  * History is append-only and signup counts are verified at commit, so the seed can't backfill
  * anything after the fact. Instead it replays a realistic past, in time order, with explicit
@@ -381,10 +382,12 @@ async function seedShift(ctx: Ctx, plan: ShiftPlan, programId: number, memberEma
 }
 
 async function main() {
+  // An environment variable rather than a CLI flag: flags get eaten by nested `npm run` and by
+  // PowerShell's npm wrapper, and a confirmation that silently disappears is worse than none.
   const host = new URL(config.DATABASE_URL).hostname;
   const isLocal = host === 'localhost' || host === '127.0.0.1';
-  if (!isLocal && !process.argv.includes('--yes-wipe-remote')) {
-    console.error(`This wipes every table in the database at ${host}. Re-run with --yes-wipe-remote if you mean it.`);
+  if (!isLocal && process.env.ALLOW_REMOTE_RESET !== 'yes') {
+    console.error(`This wipes every table in the database at ${host}. Set ALLOW_REMOTE_RESET=yes if you mean it.`);
     process.exit(1);
   }
 
