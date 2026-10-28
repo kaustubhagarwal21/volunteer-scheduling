@@ -77,7 +77,8 @@ export function ProgramDetailPage() {
       />
       {p.archived && (
         <p className="mb-6 rounded-md border border-rule bg-surface px-4 py-3 text-sm text-ink-soft">
-          This program is archived: hidden from everyday views and read-only. Restore it to change its shifts or members.
+          This program is archived: hidden from everyday views, and its shifts, signups and members can't change until it's
+          restored. Its name and description can still be edited.
         </p>
       )}
 
