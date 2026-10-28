@@ -2,7 +2,7 @@ import type { PoolClient } from 'pg';
 import type { AuthUser } from '../auth/types';
 import { withTransaction } from '../db/pool';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors';
-import { assertCanView, NOT_VISIBLE_HINT } from '../programs/access';
+import { assertCanView, notVisible } from '../programs/access';
 import { hasStarted } from '../shifts/dto';
 import {
   adjustSignupCount,
@@ -39,7 +39,7 @@ export async function signUp(actor: AuthUser, shiftId: number, requestedVoluntee
   const clock = orgClock();
   return withTransaction(async (tx) => {
     const volunteer = await loadVolunteer(tx, volunteerId);
-    const program = await lockProgramOfShift(tx, shiftId);
+    const program = await lockProgramOfShift(tx, shiftId, notVisible(actor, 'Shift'));
 
     // Holding this lock until commit means a concurrent "remove member" waits for us (and then
     // cancels this signup), or we wait for it (and then see that the membership is gone).
@@ -48,7 +48,7 @@ export async function signUp(actor: AuthUser, shiftId: number, requestedVoluntee
       [program.id, volunteer.id],
     );
     const isMember = membership.rowCount === 1;
-    if (actor.role === 'volunteer' && (!isMember || program.archived)) throw notFound('Shift', NOT_VISIBLE_HINT);
+    if (actor.role === 'volunteer' && (!isMember || program.archived)) throw notVisible(actor, 'Shift');
 
     const shift = await lockShift(tx, shiftId);
     assertProgramActive(shift);
@@ -113,8 +113,8 @@ export async function cancelSignup(actor: AuthUser, signupId: number): Promise<v
   await withTransaction(async (tx) => {
     // shift_id never changes, so it is safe to read before taking any lock.
     const ref = await tx.query<{ shift_id: number }>('SELECT shift_id FROM signups WHERE id = $1', [signupId]);
-    if (!ref.rows[0]) throw notFound('Signup');
-    await lockProgramOfShift(tx, ref.rows[0].shift_id);
+    if (!ref.rows[0]) throw notVisible(actor, 'Signup');
+    await lockProgramOfShift(tx, ref.rows[0].shift_id, notVisible(actor, 'Signup'));
     const shift = await lockShift(tx, ref.rows[0].shift_id);
     // Visibility before ownership, so a volunteer can't probe other programs' signup ids.
     await assertCanView(tx, actor, shift, 'Signup');

@@ -3,7 +3,7 @@ import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { config } from '../config';
 import { pool } from '../db/pool';
-import { HttpError } from '../http/errors';
+import { badRequest, HttpError } from '../http/errors';
 import { parse } from '../http/validate';
 import { orgClock } from '../time/orgClock';
 import { currentUser, requireAuth } from './middleware';
@@ -57,6 +57,11 @@ const registerLimiter = limiter({ windowMs: 60 * 60 * 1000, limit: 20 });
 export const authRouter = Router();
 
 authRouter.post('/register', registerLimiter, async (req, res) => {
+  if (typeof req.body === 'object' && req.body !== null && 'role' in req.body) {
+    throw badRequest(
+      "You can't choose a role: accounts created here are always volunteers. Coordinator accounts are set up by an administrator.",
+    );
+  }
   const input = parse(RegisterBody, req.body);
   const passwordHash = await hashPassword(input.password);
   // Self-registration always creates a volunteer. There is deliberately no way to pick a role here;

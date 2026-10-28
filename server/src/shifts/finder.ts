@@ -2,14 +2,14 @@ import { z } from 'zod';
 import type { AuthUser } from '../auth/types';
 import { containsPattern, QueryParams } from '../db/params';
 import { pool } from '../db/pool';
-import { Id, IsoDate } from '../http/validate';
+import { Id, IsoDate, SearchText } from '../http/validate';
 import { visibleProgramsSql } from '../programs/access';
 import { orgClock } from '../time/orgClock';
 import { SHIFT_COLUMNS, toShiftDto, type ShiftDto, type ShiftRow } from './dto';
 
 export const FinderQuery = z
   .object({
-    q: z.string().trim().max(100).optional(),
+    q: SearchText.optional(),
     programId: Id.optional(),
     state: z.enum(['open', 'partially_filled', 'filled', 'closed']).optional(),
     dateFrom: IsoDate.optional(),

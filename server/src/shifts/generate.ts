@@ -37,7 +37,8 @@ const MAX_RANGE_DAYS = 366;
 export async function generateShifts(actor: AuthUser, programId: number, input: GenerateInput): Promise<GenerateResult> {
   const clock = orgClock();
   if (input.endDate < input.startDate) throw badRequest('The end date must be on or after the start date.');
-  if (input.endDate > addDays(input.startDate, MAX_RANGE_DAYS)) {
+  // Both ends count, so the last allowed end date is start + 365 days.
+  if (input.endDate >= addDays(input.startDate, MAX_RANGE_DAYS)) {
     throw badRequest(`A pattern can cover at most ${MAX_RANGE_DAYS} days at a time.`);
   }
 

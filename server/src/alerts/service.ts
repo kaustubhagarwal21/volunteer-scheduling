@@ -1,11 +1,12 @@
+import type { PoolClient } from 'pg';
 import type { AuthUser } from '../auth/types';
 import { QueryParams } from '../db/params';
 import { pool, withTransaction } from '../db/pool';
 import { conflict } from '../http/errors';
 import { visibleProgramsSql } from '../programs/access';
-import { SHIFT_COLUMNS, toShiftDto, type ShiftDto, type ShiftRow } from '../shifts/dto';
-import { lockProgramOfShift, lockShift } from '../shifts/lifecycle';
-import { orgClock, type OrgClock } from '../time/orgClock';
+import { hasStarted, SHIFT_COLUMNS, toShiftDto, type ShiftDto, type ShiftRow } from '../shifts/dto';
+import { lockProgramOfShift, lockShift, type LockedShift } from '../shifts/lifecycle';
+import { addDays, orgClock, type OrgClock } from '../time/orgClock';
 import { recordEvent } from '../timeline/events';
 
 /** How far ahead an understaffed shift raises an alert, in days (today plus the next three). */
@@ -65,7 +66,7 @@ export async function dismissAlert(actor: AuthUser, shiftId: number): Promise<vo
   const clock = orgClock();
   await withTransaction(async (tx) => {
     await lockProgramOfShift(tx, shiftId);
-    await lockShift(tx, shiftId); // 404 for unknown/deleted shifts; serialises with signups/cancellations
+    const shift = await lockShift(tx, shiftId); // 404 for unknown/deleted shifts; serialises with signups
     const params = new QueryParams();
     const id = params.add(shiftId);
     const by = params.add(actor.id);
@@ -76,9 +77,23 @@ export async function dismissAlert(actor: AuthUser, shiftId: number): Promise<vo
           AND ${understaffedSql(params, clock)}`,
       params.values,
     );
-    if (rowCount === 0) {
-      throw conflict('NO_ACTIVE_ALERT', 'This shift has no active understaffing alert to dismiss.');
-    }
+    if (rowCount === 0) throw conflict('NO_ACTIVE_ALERT', await whyNoAlert(tx, shift, clock));
     await recordEvent(tx, { shiftId, type: 'alert_dismissed', actorId: actor.id });
   });
+}
+
+/** The specific reason a shift has no alert to dismiss, checked in the same order as the definition. */
+async function whyNoAlert(tx: PoolClient, shift: LockedShift, clock: OrgClock): Promise<string> {
+  if (shift.program_archived) return `${shift.program_name} is archived, so its shifts don't raise alerts.`;
+  if (shift.state === 'closed') return 'This shift is closed, so it has no alert.';
+  if (shift.state === 'filled') return 'This shift is filled, so it has no understaffing alert.';
+  if (hasStarted(shift, clock)) return 'This shift has already started, so its alert no longer applies.';
+  if (shift.date > addDays(clock.today, ALERT_WINDOW_DAYS)) {
+    return `Alerts only cover shifts in the next ${ALERT_WINDOW_DAYS} days; this one is further out.`;
+  }
+  const { rows } = await tx.query<{ dismissed: boolean }>(
+    'SELECT alert_dismissed_at IS NOT NULL AS dismissed FROM shifts WHERE id = $1',
+    [shift.id],
+  );
+  return rows[0].dismissed ? 'This alert has already been dismissed.' : 'This shift has no active alert to dismiss.';
 }

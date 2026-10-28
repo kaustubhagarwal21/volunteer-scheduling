@@ -3,10 +3,10 @@ import { z } from 'zod';
 import { requireCoordinator } from '../auth/middleware';
 import { containsPattern, QueryParams } from '../db/params';
 import { pool } from '../db/pool';
-import { Id, parse } from '../http/validate';
+import { Id, parse, SearchText } from '../http/validate';
 
 const VolunteerQuery = z.strictObject({
-  q: z.string().trim().max(100).optional(),
+  q: SearchText.optional(),
   /** Leave out volunteers who already belong to this program (for the "add member" picker). */
   excludeProgramId: Id.optional(),
 });

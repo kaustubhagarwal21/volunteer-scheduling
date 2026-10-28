@@ -52,6 +52,13 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     return;
   }
 
+  // Class 22 is Postgres' "data exception": a value it can't store (bad date, NUL byte, overflow).
+  // Validation should catch these first; if one slips through it is still the client's input.
+  if (isPgError(err) && err.code.startsWith('22')) {
+    res.status(400).json({ error: { code: 'INVALID_VALUE', message: 'One of the values sent is not valid.' } });
+    return;
+  }
+
   // Deadlock / serialization failure: Postgres rolled our transaction back so another could finish.
   // Nothing was written; the request is safe to retry.
   if (isPgError(err) && (err.code === '40P01' || err.code === '40001')) {

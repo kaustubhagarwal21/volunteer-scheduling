@@ -30,10 +30,21 @@ export async function isMember(db: Queryable, programId: number, userId: number)
 }
 
 /**
- * Shown to volunteers for anything outside their programs. It reads the same whether or not the
- * item exists, so it explains the rule without revealing what other programs contain.
+ * Shown to volunteers for anything outside their programs. It explains the rule without revealing
+ * what other programs contain — as long as volunteers get exactly the same answer whether or not the
+ * item exists, which is what notVisible() is for.
  */
-export const NOT_VISIBLE_HINT = 'It may not exist, or it may belong to a program you are not a member of.';
+export const NOT_VISIBLE_HINT =
+  'It may not exist, or it may belong to a program you are not a member of or that has been archived.';
+
+/**
+ * The 404 for "missing or not yours to see". Volunteers get one identical answer either way, so a
+ * volunteer can't probe which ids exist in other programs; coordinators see everything, so for them
+ * it simply means missing.
+ */
+export function notVisible(user: AuthUser, what: string) {
+  return notFound(what, user.role === 'coordinator' ? undefined : NOT_VISIBLE_HINT);
+}
 
 /**
  * The visibility rule, for a single program (or a shift/signup inside it).
@@ -48,7 +59,7 @@ export async function assertCanView(
 ): Promise<void> {
   if (user.role === 'coordinator') return;
   if (program.program_archived || !(await isMember(db, program.program_id, user.id))) {
-    throw notFound(what, NOT_VISIBLE_HINT);
+    throw notVisible(user, what);
   }
 }
 

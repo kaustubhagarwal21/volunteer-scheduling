@@ -2,7 +2,7 @@ import type { PoolClient } from 'pg';
 import type { AuthUser } from '../auth/types';
 import { pool, withTransaction, type Queryable } from '../db/pool';
 import { badRequest, conflict, notFound } from '../http/errors';
-import { assertCanView, lockActiveProgram } from '../programs/access';
+import { assertCanView, lockActiveProgram, notVisible } from '../programs/access';
 import { orgClock, type OrgClock } from '../time/orgClock';
 import { recordEvent } from '../timeline/events';
 import { SHIFT_COLUMNS, hasEnded, hasStarted, toShiftDto, type ShiftDto, type ShiftRow, type ShiftState } from './dto';
@@ -43,22 +43,27 @@ async function assertSlotFree(tx: PoolClient, programId: number, date: string, s
 }
 
 /**
- * Loads one shift for display. Deleted shifts stay readable for coordinators only, so the history
- * of a deleted shift is never lost to them.
+ * One shift for display, or null. Deleted shifts are returned only with includeDeleted (used for
+ * coordinators, so the history of a deleted shift is never lost to them).
  */
-export async function loadShift(
+async function findShift(
   db: Queryable,
   shiftId: number,
   clock: OrgClock,
   options: { includeDeleted?: boolean } = {},
-): Promise<ShiftDto> {
+): Promise<ShiftDto | null> {
   const { rows } = await db.query<ShiftRow>(
     `SELECT ${SHIFT_COLUMNS} FROM shifts s JOIN programs p ON p.id = s.program_id
       WHERE s.id = $1 AND ($2 OR s.deleted_at IS NULL)`,
     [shiftId, options.includeDeleted ?? false],
   );
-  if (!rows[0]) throw notFound('Shift');
-  return toShiftDto(rows[0], clock);
+  return rows[0] ? toShiftDto(rows[0], clock) : null;
+}
+
+export async function loadShift(db: Queryable, shiftId: number, clock: OrgClock): Promise<ShiftDto> {
+  const shift = await findShift(db, shiftId, clock);
+  if (!shift) throw notFound('Shift');
+  return shift;
 }
 
 export async function createShift(actor: AuthUser, programId: number, input: ShiftInput): Promise<ShiftDto> {
@@ -271,7 +276,8 @@ export interface SignupSummary {
 }
 
 async function loadVisibleShift(actor: AuthUser, shiftId: number, clock: OrgClock): Promise<ShiftDto> {
-  const shift = await loadShift(pool, shiftId, clock, { includeDeleted: actor.role === 'coordinator' });
+  const shift = await findShift(pool, shiftId, clock, { includeDeleted: actor.role === 'coordinator' });
+  if (!shift) throw notVisible(actor, 'Shift');
   await assertCanView(pool, actor, { program_id: shift.programId, program_archived: shift.programArchived }, 'Shift');
   return shift;
 }

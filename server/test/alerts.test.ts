@@ -202,11 +202,18 @@ describe('dismissing an alert', () => {
     const alreadyDismissed = await insertShift(program.id, coordinator, { date: dayFromToday(2) });
     expect((await dismiss(coord, alreadyDismissed)).status).toBe(204);
 
-    for (const shiftId of [filled, underway, notYetInWindow, alreadyDismissed]) {
+    // Each refusal says why there is nothing to dismiss.
+    const cases: [number, RegExp][] = [
+      [filled, /is filled/],
+      [underway, /already started/],
+      [notYetInWindow, /only cover shifts in the next 3 days/],
+      [alreadyDismissed, /already been dismissed/],
+    ];
+    for (const [shiftId, reason] of cases) {
       const res = await dismiss(coord, shiftId);
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe('NO_ACTIVE_ALERT');
-      expect(res.body.error.message).toMatch(/no active understaffing alert/);
+      expect(res.body.error.message).toMatch(reason);
     }
     // Only the one real dismissal reached a timeline.
     for (const shiftId of [filled, underway, notYetInWindow]) {

@@ -6,7 +6,7 @@ import { SHIFT_COLUMNS, toShiftDto, type ShiftDto, type ShiftRow } from '../shif
 import { lockShift } from '../shifts/lifecycle';
 import { cancelLockedSignup } from '../signups/service';
 import { orgClock } from '../time/orgClock';
-import { assertCanView, lockActiveProgram, visibleProgramsSql } from './access';
+import { assertCanView, lockActiveProgram, notVisible, visibleProgramsSql } from './access';
 
 export interface ProgramDto {
   id: number;
@@ -27,11 +27,13 @@ interface ProgramRow {
   upcoming_shift_count: number;
 }
 
+// $1 is the organisation's current time. "Upcoming" means not yet ended, as everywhere else.
 const PROGRAM_COLUMNS = `
   p.id, p.name, p.description, p.archived_at,
   (SELECT count(*) FROM program_members pm WHERE pm.program_id = p.id) AS member_count,
   (SELECT count(*) FROM shifts s
-    WHERE s.program_id = p.id AND s.deleted_at IS NULL AND s.closed_at IS NULL AND s.shift_date >= $1::date
+    WHERE s.program_id = p.id AND s.deleted_at IS NULL AND s.closed_at IS NULL
+      AND upper(s.time_range) > $1::timestamp
   ) AS upcoming_shift_count`;
 
 function toProgramDto(row: ProgramRow): ProgramDto {
@@ -50,7 +52,7 @@ function toProgramDto(row: ProgramRow): ProgramDto {
 export async function listPrograms(user: AuthUser, archived: boolean): Promise<ProgramDto[]> {
   if (archived && user.role !== 'coordinator') return [];
   const params = new QueryParams();
-  params.add(orgClock().today); // $1, used by PROGRAM_COLUMNS
+  params.add(orgClock().now); // $1, used by PROGRAM_COLUMNS
   const { rows } = await pool.query<ProgramRow>(
     `SELECT ${PROGRAM_COLUMNS}
        FROM programs p
@@ -63,10 +65,10 @@ export async function listPrograms(user: AuthUser, archived: boolean): Promise<P
 
 export async function getProgram(user: AuthUser, programId: number): Promise<ProgramDto> {
   const { rows } = await pool.query<ProgramRow>(`SELECT ${PROGRAM_COLUMNS} FROM programs p WHERE p.id = $2`, [
-    orgClock().today,
+    orgClock().now,
     programId,
   ]);
-  if (!rows[0]) throw notFound('Program');
+  if (!rows[0]) throw notVisible(user, 'Program');
   await assertCanView(pool, user, { program_id: programId, program_archived: rows[0].archived_at !== null }, 'Program');
   return toProgramDto(rows[0]);
 }

@@ -23,10 +23,12 @@ export interface LockedShift extends ShiftRow {
 /**
  * Lock 1: the program a shift belongs to, FOR SHARE. Concurrent shift operations can all hold it;
  * archiving takes FOR UPDATE and so waits for them (and they wait for an archive in progress).
+ * `notFoundError` lets a caller that volunteers can reach answer "missing" exactly like "not yours".
  */
 export async function lockProgramOfShift(
   tx: PoolClient,
   shiftId: number,
+  notFoundError: Error = notFound('Shift'),
 ): Promise<{ id: number; name: string; archived: boolean }> {
   const { rows } = await tx.query<{ id: number; name: string; archived: boolean }>(
     `SELECT p.id, p.name, p.archived_at IS NOT NULL AS archived
@@ -35,7 +37,7 @@ export async function lockProgramOfShift(
         FOR SHARE`,
     [shiftId],
   );
-  if (!rows[0]) throw notFound('Shift');
+  if (!rows[0]) throw notFoundError;
   return rows[0];
 }
 
