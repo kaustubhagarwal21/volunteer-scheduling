@@ -21,7 +21,7 @@ Every case where AI output was wrong is recorded with how it was caught and fixe
 
 ### What I got
 
-The agent read every file (README brief, SUBMISSION template, the five doc stubs) and checked my machine (Node 22.11, Docker installed but not running, GitHub CLI signed in). Instead of picking a stack itself, it asked me three questions, because the brief says to use what I'm most confident in and I'll be questioned on the code.
+The agent read every file (the brief, then README.md and now [docs/brief.md](brief.md); the SUBMISSION template; the five doc stubs) and checked my machine (Node 22.11, Docker installed but not running, GitHub CLI signed in). Instead of picking a stack itself, it asked me three questions, because the brief says to use what I'm most confident in and I'll be questioned on the code.
 
 ### My answers
 

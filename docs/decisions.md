@@ -65,7 +65,7 @@ Each entry is a choice where a real alternative existed. Entries marked **Later 
 - **Rejected:** a stored alerts table, or a scheduled job raising alerts. A job falls behind on a host that sleeps; a query is always current.
 - **Later reversed** (`2f658a9`), after the design review:
   1. I had made the whole alerts area **coordinator-only**. The scenario says *"Anyone should be able to see which shifts are short-staffed"* and the goal restricts only *dismissing* to coordinators, so the alerts area and the badge are now shown to everyone, scoped to their programs.
-  2. I had also un-dismissed alerts on *any* drop out of Filled (a headcount increase) and on rescheduling. The README singles out "when a dismissed alert is allowed to reappear" as one of the exact rules, and the brief names one trigger, a cancellation, so that is now the only one. Tests cover the cases that must *not* bring an alert back.
+  2. I had also un-dismissed alerts on *any* drop out of Filled (a headcount increase) and on rescheduling. The brief singles out "when a dismissed alert is allowed to reappear" as one of the exact rules, and the brief names one trigger, a cancellation, so that is now the only one. Tests cover the cases that must *not* bring an alert back.
 
 ## Decision 10: Who may sign up or cancel, and until when
 
