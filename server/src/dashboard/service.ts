@@ -145,15 +145,18 @@ async function countSignupsPerWeek(user: AuthUser, clock: OrgClock) {
   const visible = visibleProgramsSql(user, params);
   const start = params.add(clock.weekStart);
   const zone = params.add(clock.timeZone);
+  // Week starts are built as plain DATEs. (generate_series over dates would silently return
+  // timestamptz in the session's zone, which shifted every bucket by the UTC offset.) A local date
+  // becomes an instant only through an explicit `date::timestamp AT TIME ZONE zone`.
   const { rows } = await pool.query<{ week_start: string; signups: number }>(
     `SELECT to_char(w.week_start, 'YYYY-MM-DD') AS week_start, count(su.id) AS signups
-       FROM generate_series(${start}::date - ${(WEEKS_CHARTED - 1) * 7}, ${start}::date, interval '7 days') AS w(week_start)
+       FROM (SELECT ${start}::date - 7 * i AS week_start FROM generate_series(0, ${WEEKS_CHARTED - 1}) AS i) AS w
        LEFT JOIN (signups su
                   JOIN shifts s ON s.id = su.shift_id
                   JOIN programs p ON p.id = s.program_id)
               ON p.archived_at IS NULL AND ${visible}
-             AND su.created_at >= (w.week_start AT TIME ZONE ${zone})
-             AND su.created_at < ((w.week_start + interval '7 days') AT TIME ZONE ${zone})
+             AND su.created_at >= (w.week_start::timestamp AT TIME ZONE ${zone})
+             AND su.created_at < ((w.week_start + 7)::timestamp AT TIME ZONE ${zone})
       GROUP BY w.week_start
       ORDER BY w.week_start`,
     params.values,

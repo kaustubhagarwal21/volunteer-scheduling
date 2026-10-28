@@ -166,7 +166,7 @@ BEGIN
   SELECT count(*) INTO actual FROM signups WHERE shift_id = target AND cancelled_at IS NULL;
   IF stored <> actual THEN
     RAISE EXCEPTION 'shift %: signup_count is % but it has % active signups', target, stored, actual
-      USING ERRCODE = 'check_violation';
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'shifts_signup_count_matches';
   END IF;
   RETURN NULL;
 END;
