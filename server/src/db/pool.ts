@@ -9,16 +9,9 @@ pg.types.setTypeParser(pg.types.builtins.TIMESTAMP, (value) => value);
 // Every count in this app is far below 2^53, so a plain number is safe.
 pg.types.setTypeParser(pg.types.builtins.INT8, (value) => Number(value));
 
+// Note: queries never rely on the session time zone (CURRENT_DATE, LOCALTIMESTAMP...). The
+// organisation's "today" and "now" are passed in explicitly; see time/orgClock.ts.
 export const pool = new pg.Pool({ connectionString: config.DATABASE_URL, max: 10 });
-
-// Run every session in the organisation's time zone, so CURRENT_DATE, LOCALTIMESTAMP and
-// date_trunc('week', now()) mean "today", "now" and "this week" for the organisation.
-// set_config takes the zone as a bind parameter, so the value is never spliced into SQL.
-pool.on('connect', (client) => {
-  client
-    .query("SELECT set_config('TimeZone', $1, false)", [config.ORG_TIMEZONE])
-    .catch((err: unknown) => console.error('Failed to set session time zone', err));
-});
 
 pool.on('error', (err) => {
   // An idle client lost its connection (e.g. the database restarted). The pool discards it;
