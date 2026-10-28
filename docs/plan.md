@@ -2,7 +2,7 @@
 
 ## How the work was split into sessions
 
-The first build happened in **one evening session on 28 October 2026 (about 18:00–20:30 IST)**, working with Claude Code (an AI coding agent). It used parallel AI agents for independent design review and for writing tests. The session had distinct, partly overlapping phases, and the git history shows them in roughly this order (the scaffold `8973077` was committed 38 seconds before the schema `9f493ac`, and the seed before the verification tests). Where several commits share a minute, I had written a stretch of work and then committed it as separate logical steps, in the order the work happened, rather than committing mid-stream. For example, the lifecycle API and the deadlock fix that its test exposed are two separate commits.
+The first build happened in **one evening session on 28 October 2026 (about 18:00–20:20 IST)**, working with Claude Code (an AI coding agent). In the same session, a fact-check of these docs, a seed fix and seeding the live database followed until about 20:50, and after a break, one small UI fix at 22:15. It used parallel AI agents for independent design review and for writing tests. The session had distinct, partly overlapping phases, and the git history shows them in roughly this order (the scaffold `8973077` was committed 38 seconds before the schema `9f493ac`, and the seed before the verification tests). Where several commits share a minute, I had written a stretch of work and then committed it as separate logical steps, in the order the work happened, rather than committing mid-stream. For example, the lifecycle API and the deadlock fix that its test exposed are two separate commits.
 
 | Phase | Time (IST) | What happened |
 |---|---|---|
@@ -16,7 +16,9 @@ The first build happened in **one evening session on 28 October 2026 (about 18:0
 | Remaining features | 19:30–19:45 | Programs, membership, generation, roster CSV, dashboard, alerts (`11f6823`). |
 | Verification pass (in parallel) | 19:45–20:05 | Six AI test agents wrote 220 tests, one area each; 10 failed and exposed 4 bugs (`adee245`, then `a29554b`). |
 | Client pages, seed, deployment | 19:40–20:15 | Every page, a demo seed, a production build check in a real browser, Render and CI configuration. |
-| Documentation | 20:15– | These docs. |
+| Documentation | 20:15–20:20 | These docs. |
+| Fact-check and fixes | 20:20–20:50 | Four AI agents checked 531 claims in these docs against the code; 51 were corrected (`0600b92`). Replaying the demo steps moved one seeded shift (`c46ca28`). Seeded the live database. |
+| Follow-up | 22:15 | Reworded the archived-program banner to match the archive rule (`f29fee3`). |
 
 **My own sessions after the build** (reading and understanding the code, deploying, rewriting these docs in my own words) are recorded here as they happen:
 
@@ -35,7 +37,7 @@ The first build happened in **one evening session on 28 October 2026 (about 18:0
 
 ## Estimate versus actual
 
-- **The brief's budget** is about 12 hours of human work. With an AI agent doing most of the typing, the initial build took about 2.5 hours of wall-clock time. That number doesn't compare like-for-like with 12 hours: much of it was waiting for parallel agents, and the real cost moves to reading, understanding and verifying the output, which is my own time after the build (table above).
+- **The brief's budget** is about 12 hours of human work. With an AI agent doing most of the typing, the initial build took about 2 hours 20 minutes of wall-clock time, plus about 30 minutes for the fact-check and fixes. That doesn't compare like-for-like with 12 hours: much of it was waiting for parallel agents, and the real cost moves to reading, understanding and verifying the output, which is my own time after the build (table above).
 - **What took longer than expected:** the design review took about 80 minutes of background time, the longest single step. That was because the reviewers actually ran concurrent SQL sessions against Postgres to prove race conditions rather than just reading the design. It was worth it: it found the membership race, which my own tests hadn't.
 - **What took less:** the CRUD-shaped parts (programs, members, finder) went quickly once the locking pattern in `shifts/lifecycle.ts` existed.
 - **Unplanned work:**
