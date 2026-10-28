@@ -3,6 +3,7 @@ import path from 'node:path';
 import cookieParser from 'cookie-parser';
 import express from 'express';
 import helmet from 'helmet';
+import { authRouter } from './auth/routes';
 import { config } from './config';
 import { errorHandler } from './http/errorHandler';
 import { notFound } from './http/errors';
@@ -24,6 +25,7 @@ export function createApp() {
   api.get('/health', (_req, res) => {
     res.json({ ok: true });
   });
+  api.use('/auth', authRouter);
   api.use(() => {
     throw notFound('API route');
   });
