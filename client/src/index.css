@@ -15,15 +15,23 @@
   --color-rule: #dfe3e8;
   --color-rule-strong: #c5ccd5;
 
-  /* Shift states, each a foreground + a tint. */
-  --color-open: #b42318;
-  --color-open-tint: #fef3f2;
-  --color-partial: #b54708;
-  --color-partial-tint: #fffaeb;
-  --color-filled: #067647;
-  --color-filled-tint: #ecfdf3;
-  --color-closed: #475467;
-  --color-closed-tint: #f2f4f7;
+  /*
+   * Shift-state marks (dots, slots, chart segments) — never used for text. Ordered Open, Partially
+   * filled, Filled, Closed so red and green are never adjacent. Checked with the dataviz palette
+   * validator: adjacent colour-blind separation ΔE 11.3, normal vision 22.5. Yellow is below 3:1 on
+   * white, so every use is paired with a text label, a legend or a table.
+   */
+  --color-open: #d03b3b;
+  --color-partial: #fab219;
+  --color-filled: #0ca30c;
+  --color-closed: #8b95a5;
+
+  /* Single-series charts (no state meaning). */
+  --color-series: #2a78d6;
+
+  /* Text for errors and refusals. */
+  --color-danger: #b42318;
+  --color-danger-tint: #fef3f2;
 
   --color-focus: #2e6bd8;
 }

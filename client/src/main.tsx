@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { ApiError } from './api/client';
 import { App } from './App';
 import { AuthProvider, ME_QUERY_KEY } from './auth/AuthContext';
+import { ToastProvider } from './components/Toast';
 import './index.css';
 
 /** If the session expires mid-use, any 401 drops the cached identity and the app returns to sign-in. */
@@ -28,9 +29,11 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <App />
-      </AuthProvider>
+      <ToastProvider>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </ToastProvider>
     </QueryClientProvider>
   </StrictMode>,
 );

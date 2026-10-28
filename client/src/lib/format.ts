@@ -36,15 +36,21 @@ export function addMinutes(hhmm: string, minutes: number): string {
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 }
 
-/** An absolute instant (e.g. when a signup was made), shown in the organisation's time zone. */
+/**
+ * An absolute instant (e.g. when a signup was made), shown in the organisation's time zone and in the
+ * same 12-hour style as shift times: '9 Oct, 3:04 pm'.
+ */
 export function formatTimestamp(iso: string, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-GB', {
+  const parts = new Intl.DateTimeFormat('en-GB', {
     day: 'numeric',
     month: 'short',
     hour: 'numeric',
     minute: '2-digit',
+    hour12: true,
     timeZone,
-  }).format(new Date(iso));
+  }).formatToParts(new Date(iso));
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${part('day')} ${part('month')}, ${part('hour')}:${part('minute')} ${part('dayPeriod').toLowerCase()}`;
 }
 
 export function plural(count: number, singular: string, pluralForm = `${singular}s`): string {

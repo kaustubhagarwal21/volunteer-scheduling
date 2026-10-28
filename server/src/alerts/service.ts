@@ -28,12 +28,15 @@ function understaffedSql(params: QueryParams, clock: OrgClock): string {
       AND (s.shift_date + s.start_time) > ${params.add(clock.now)}::timestamp`;
 }
 
+/** Includes the viewer's own signup, so the alerts page can offer Sign up or Cancel. */
+type AlertShift = ShiftDto & { mySignupId: number | null };
+
 export interface AlertsResponse {
   /** Active (not dismissed) alerts the viewer can see: the number on the navigation badge. */
   count: number;
-  alerts: ShiftDto[];
+  alerts: AlertShift[];
   /** Still understaffed but dismissed by a coordinator. Coordinators only. */
-  dismissed: ShiftDto[];
+  dismissed: AlertShift[];
 }
 
 /**
@@ -44,17 +47,19 @@ export interface AlertsResponse {
 export async function listAlerts(user: AuthUser): Promise<AlertsResponse> {
   const clock = orgClock();
   const params = new QueryParams();
-  const { rows } = await pool.query<ShiftRow & { dismissed: boolean }>(
-    `SELECT ${SHIFT_COLUMNS}, s.alert_dismissed_at IS NOT NULL AS dismissed
+  const viewer = params.add(user.id);
+  const { rows } = await pool.query<ShiftRow & { dismissed: boolean; my_signup_id: number | null }>(
+    `SELECT ${SHIFT_COLUMNS}, s.alert_dismissed_at IS NOT NULL AS dismissed, mine.id AS my_signup_id
        FROM shifts s
        JOIN programs p ON p.id = s.program_id
+       LEFT JOIN signups mine ON mine.shift_id = s.id AND mine.volunteer_id = ${viewer} AND mine.cancelled_at IS NULL
       WHERE ${understaffedSql(params, clock)} AND ${visibleProgramsSql(user, params)}
       ORDER BY s.shift_date, s.start_time, s.id`,
     params.values,
   );
-  const alerts = rows.filter((row) => !row.dismissed).map((row) => toShiftDto(row, clock));
-  const dismissed =
-    user.role === 'coordinator' ? rows.filter((row) => row.dismissed).map((row) => toShiftDto(row, clock)) : [];
+  const toAlert = (row: (typeof rows)[number]): AlertShift => ({ ...toShiftDto(row, clock), mySignupId: row.my_signup_id });
+  const alerts = rows.filter((row) => !row.dismissed).map(toAlert);
+  const dismissed = user.role === 'coordinator' ? rows.filter((row) => row.dismissed).map(toAlert) : [];
   return { count: alerts.length, alerts, dismissed };
 }
 

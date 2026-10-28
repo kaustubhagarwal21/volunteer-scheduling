@@ -6,7 +6,7 @@ type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'quiet';
 const buttonStyles: Record<ButtonVariant, string> = {
   primary: 'bg-ink text-white hover:bg-ink-soft disabled:bg-muted',
   secondary: 'bg-surface text-ink border border-rule-strong hover:bg-paper',
-  danger: 'bg-surface text-open border border-open/40 hover:bg-open-tint',
+  danger: 'bg-surface text-danger border border-danger/40 hover:bg-danger-tint',
   quiet: 'text-ink-soft hover:bg-rule/60',
 };
 
@@ -80,7 +80,7 @@ export function ErrorBanner({ error }: { error: unknown }) {
   if (!error) return null;
   const message = error instanceof ApiError || error instanceof Error ? error.message : 'Something went wrong.';
   return (
-    <p role="alert" className="rounded-md border border-open/30 bg-open-tint px-3 py-2 text-sm text-open">
+    <p role="alert" className="rounded-md border border-danger/30 bg-danger-tint px-3 py-2 text-sm text-danger">
       {message}
     </p>
   );

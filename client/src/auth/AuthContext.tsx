@@ -6,6 +6,7 @@ import type { User } from '../api/types';
 interface MeResponse {
   user: User;
   orgTimezone: string;
+  today: string;
 }
 
 interface AuthState {
@@ -13,6 +14,8 @@ interface AuthState {
   isCoordinator: boolean;
   /** IANA zone used to display absolute timestamps such as "signed up at". */
   orgTimezone: string;
+  /** Today's date in the organisation's zone, from the server (never the browser's clock). */
+  today: string;
   isLoading: boolean;
   login(email: string, password: string): Promise<void>;
   register(name: string, email: string, password: string): Promise<void>;
@@ -47,6 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     isCoordinator: user?.role === 'coordinator',
     orgTimezone: me.data?.orgTimezone ?? 'UTC',
+    today: me.data?.today ?? '',
     isLoading: me.isPending,
     async login(email, password) {
       await api('POST', '/auth/login', { email, password });

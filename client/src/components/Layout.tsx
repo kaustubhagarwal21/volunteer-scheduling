@@ -11,12 +11,11 @@ export function Layout() {
   const { user, isCoordinator, logout } = useAuth();
   const navigate = useNavigate();
 
-  // The badge is a live count from the server, refreshed every minute and after any change
-  // that invalidates the 'alerts' query (signups, cancellations, dismissals...).
+  // The badge is a live count from the server, refreshed every minute and after every change
+  // made in the app (useAction refetches all queries on success).
   const alerts = useQuery({
     queryKey: ALERTS_QUERY_KEY,
     queryFn: () => api<AlertsResponse>('GET', '/alerts'),
-    enabled: isCoordinator,
     refetchInterval: 60_000,
   });
   const alertCount = alerts.data?.count ?? 0;
@@ -40,19 +39,17 @@ export function Layout() {
             </NavItem>
             <NavItem to="/shifts">Shifts</NavItem>
             <NavItem to="/programs">{isCoordinator ? 'Programs' : 'My programs'}</NavItem>
-            {isCoordinator && (
-              <NavItem to="/alerts">
-                Alerts
-                {alertCount > 0 && (
-                  <span
-                    className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-open px-1.5 text-xs font-bold text-white"
-                    aria-label={`${alertCount} understaffed shifts`}
-                  >
-                    {alertCount}
-                  </span>
-                )}
-              </NavItem>
-            )}
+            <NavItem to="/alerts">
+              Alerts
+              {alertCount > 0 && (
+                <span
+                  className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-danger px-1.5 text-xs font-bold text-white"
+                  aria-label={`${alertCount} understaffed shifts`}
+                >
+                  {alertCount}
+                </span>
+              )}
+            </NavItem>
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm">
             <span>
