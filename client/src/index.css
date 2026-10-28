@@ -1,1 +1,54 @@
 @import "tailwindcss";
+
+/*
+ * Design tokens. Colour is reserved for meaning: the four shift states and alerts carry colour,
+ * everything else is ink on paper so the eye goes to what needs people.
+ */
+@theme {
+  --font-sans: "Atkinson Hyperlegible Next", ui-sans-serif, system-ui, sans-serif;
+
+  --color-ink: #18222f;
+  --color-ink-soft: #3b4756;
+  --color-muted: #5b6676;
+  --color-paper: #f6f7f4;
+  --color-surface: #ffffff;
+  --color-rule: #dfe3e8;
+  --color-rule-strong: #c5ccd5;
+
+  /* Shift states, each a foreground + a tint. */
+  --color-open: #b42318;
+  --color-open-tint: #fef3f2;
+  --color-partial: #b54708;
+  --color-partial-tint: #fffaeb;
+  --color-filled: #067647;
+  --color-filled-tint: #ecfdf3;
+  --color-closed: #475467;
+  --color-closed-tint: #f2f4f7;
+
+  --color-focus: #2e6bd8;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+    }
+  }
+}
