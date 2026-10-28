@@ -3,13 +3,17 @@ import path from 'node:path';
 import cookieParser from 'cookie-parser';
 import express from 'express';
 import helmet from 'helmet';
+import { alertsRouter } from './alerts/routes';
 import { requireAuth } from './auth/middleware';
 import { authRouter } from './auth/routes';
 import { config } from './config';
+import { dashboardRouter } from './dashboard/routes';
 import { errorHandler } from './http/errorHandler';
 import { HttpError, notFound } from './http/errors';
+import { meRouter, programsRouter } from './programs/routes';
 import { shiftsRouter } from './shifts/routes';
 import { signupsRouter } from './signups/routes';
+import { usersRouter } from './users/routes';
 
 const CLIENT_DIST = path.resolve(__dirname, '../../client/dist');
 
@@ -34,8 +38,13 @@ export function createApp() {
   // Deny by default: every route registered below needs a signed-in user. Coordinator-only routes
   // add requireCoordinator on top; nothing relies on the UI hiding a button.
   api.use(requireAuth);
+  api.use('/me', meRouter);
+  api.use('/programs', programsRouter);
   api.use('/shifts', shiftsRouter);
   api.use('/signups', signupsRouter);
+  api.use('/alerts', alertsRouter);
+  api.use('/dashboard', dashboardRouter);
+  api.use('/users', usersRouter);
   api.use(() => {
     throw notFound('API route');
   });
