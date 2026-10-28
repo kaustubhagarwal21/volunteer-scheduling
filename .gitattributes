@@ -1,0 +1,5 @@
+# Store text files with LF in the repository regardless of the developer's OS,
+# so SQL migrations and scripts behave the same on Windows and on the Linux host.
+* text=auto eol=lf
+*.png binary
+*.ico binary
