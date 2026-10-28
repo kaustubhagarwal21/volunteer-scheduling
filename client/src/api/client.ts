@@ -20,7 +20,8 @@ type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 export async function api<T>(method: Method, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    // The server requires this on every state-changing call (a CSRF safeguard), body or not.
+    headers: method === 'GET' ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 

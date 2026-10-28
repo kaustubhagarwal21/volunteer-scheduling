@@ -3,10 +3,11 @@ import path from 'node:path';
 import cookieParser from 'cookie-parser';
 import express from 'express';
 import helmet from 'helmet';
+import { requireAuth } from './auth/middleware';
 import { authRouter } from './auth/routes';
 import { config } from './config';
 import { errorHandler } from './http/errorHandler';
-import { notFound } from './http/errors';
+import { HttpError, notFound } from './http/errors';
 import { shiftsRouter } from './shifts/routes';
 import { signupsRouter } from './signups/routes';
 
@@ -24,10 +25,15 @@ export function createApp() {
   if (config.NODE_ENV !== 'test') app.use(requestLogger);
 
   const api = express.Router();
+  api.use(requireJsonForChanges);
   api.get('/health', (_req, res) => {
     res.json({ ok: true });
   });
   api.use('/auth', authRouter);
+
+  // Deny by default: every route registered below needs a signed-in user. Coordinator-only routes
+  // add requireCoordinator on top; nothing relies on the UI hiding a button.
+  api.use(requireAuth);
   api.use('/shifts', shiftsRouter);
   api.use('/signups', signupsRouter);
   api.use(() => {
@@ -48,6 +54,20 @@ export function createApp() {
   app.use(errorHandler);
   return app;
 }
+
+/**
+ * Cross-site request forgery: the session cookie is SameSite=Lax, so browsers don't send it on
+ * cross-site POSTs. As a second layer, every state-changing API call must say it is JSON. An HTML
+ * form on another site can't send that content type, and a cross-origin script would need a CORS
+ * preflight, which this API never grants.
+ */
+const requireJsonForChanges: express.RequestHandler = (req, _res, next) => {
+  const changesState = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+  if (changesState && !req.headers['content-type']?.startsWith('application/json')) {
+    throw new HttpError(415, 'JSON_REQUIRED', 'Send this request with Content-Type: application/json.');
+  }
+  next();
+};
 
 const requestLogger: express.RequestHandler = (req, res, next) => {
   const started = process.hrtime.bigint();

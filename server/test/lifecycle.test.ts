@@ -7,6 +7,7 @@ import {
   dayFromToday,
   eventsFor,
   insertShift,
+  insertSignup,
   setupProgram,
   shiftState,
   signIn,
@@ -46,20 +47,24 @@ describe('fill state is derived from signups', () => {
     ]);
   });
 
-  it('cannot be set by hand through the API', async () => {
+  it('cannot be set through the API, and the attempt is explained', async () => {
     const { coordinator, program, coord } = await setupProgram(0);
     const shiftId = await insertShift(program.id, coordinator, { date: dayFromToday(5) });
-    const res = await coord.patch(`/api/shifts/${shiftId}`).send({ state: 'filled', location: 'Annex' });
-    expect(res.status).toBe(200);
-    expect(res.body.shift).toMatchObject({ state: 'open', location: 'Annex' });
+    const res = await coord.patch(`/api/shifts/${shiftId}`).send({ state: 'filled' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('FILL_STATE_DERIVED');
+    expect((await shiftState(shiftId)).state).toBe('open');
   });
 
-  it('cannot be set by hand in the database either', async () => {
+  it('cannot be set in the database either, directly or through the counter', async () => {
     const coordinator = await createUser('coordinator');
     const program = await createProgram(coordinator);
     const shiftId = await insertShift(program.id, coordinator, { date: dayFromToday(5) });
     await expect(pool.query("UPDATE shifts SET state = 'filled' WHERE id = $1", [shiftId])).rejects.toThrow(
       /column "state" can only be updated to DEFAULT/,
+    );
+    await expect(pool.query('UPDATE shifts SET signup_count = 2 WHERE id = $1', [shiftId])).rejects.toThrow(
+      /signup_count is 2 but it has 0 active signups/,
     );
   });
 });
@@ -131,12 +136,21 @@ describe('signup rules', () => {
     expect(again.body.error.code).toBe('ALREADY_SIGNED_UP');
   });
 
-  it('rejects signups once the shift has started', async () => {
-    const { coordinator, program, vols } = await setupProgram(1);
-    const shiftId = await insertShift(program.id, coordinator, { date: dayFromToday(-1) });
-    const res = await vols[0].post(`/api/shifts/${shiftId}/signups`);
-    expect(res.status).toBe(409);
-    expect(res.body.error.code).toBe('SHIFT_STARTED');
+  it('stops volunteers at the start time, but lets a coordinator record a walk-in until it is closed', async () => {
+    const { coordinator, program, volunteers, vols, coord } = await setupProgram(2);
+    const shiftId = await insertShift(program.id, coordinator, { date: dayFromToday(-1), requiredHeadcount: 3 });
+
+    const selfSignup = await vols[0].post(`/api/shifts/${shiftId}/signups`);
+    expect(selfSignup.status).toBe(409);
+    expect(selfSignup.body.error.code).toBe('SHIFT_STARTED');
+
+    const walkIn = await coord.post(`/api/shifts/${shiftId}/signups`).send({ volunteerId: volunteers[1].id });
+    expect(walkIn.status).toBe(201);
+
+    await coord.post(`/api/shifts/${shiftId}/close`);
+    const afterClose = await coord.post(`/api/shifts/${shiftId}/signups`).send({ volunteerId: volunteers[0].id });
+    expect(afterClose.status).toBe(409);
+    expect(afterClose.body.error.code).toBe('SHIFT_CLOSED');
   });
 
   it('lets a coordinator sign up a member, but not a non-member', async () => {
@@ -158,7 +172,7 @@ describe('signup rules', () => {
     expect(notMember.body.error.message).toContain('Outsider Olu');
   });
 
-  it("does not let a volunteer sign up or cancel someone else", async () => {
+  it('does not let a volunteer sign up or cancel someone else', async () => {
     const { coordinator, program, volunteers, vols } = await setupProgram(2);
     const shiftId = await insertShift(program.id, coordinator, { date: dayFromToday(3) });
 
@@ -176,19 +190,13 @@ describe('cancellation rules', () => {
   it('stops volunteers cancelling a started shift, but lets a coordinator record a no-show', async () => {
     const { coordinator, program, volunteers, vols, coord } = await setupProgram(1);
     const shiftId = await insertShift(program.id, coordinator, { date: dayFromToday(-1) });
-    // Signup made before the shift started (inserted directly, as the API now refuses it).
-    const { rows } = await pool.query(
-      `INSERT INTO signups (shift_id, volunteer_id, time_range, created_by)
-       SELECT id, $2, time_range, $2 FROM shifts WHERE id = $1 RETURNING id`,
-      [shiftId, volunteers[0].id],
-    );
-    await pool.query('UPDATE shifts SET signup_count = 1 WHERE id = $1', [shiftId]);
+    const signupId = await insertSignup(shiftId, volunteers[0]);
 
-    const byVolunteer = await vols[0].post(`/api/signups/${rows[0].id}/cancel`);
+    const byVolunteer = await vols[0].post(`/api/signups/${signupId}/cancel`);
     expect(byVolunteer.status).toBe(409);
     expect(byVolunteer.body.error.code).toBe('SHIFT_STARTED');
 
-    expect((await coord.post(`/api/signups/${rows[0].id}/cancel`)).status).toBe(204);
+    expect((await coord.post(`/api/signups/${signupId}/cancel`)).status).toBe(204);
     expect(await shiftState(shiftId)).toEqual({ state: 'open', signup_count: 0 });
   });
 
@@ -215,12 +223,7 @@ describe('closing', () => {
   it('locks a closed shift against signups, cancellations, edits and deletion', async () => {
     const { coordinator, program, volunteers, vols, coord } = await setupProgram(2);
     const shiftId = await insertShift(program.id, coordinator, { date: dayFromToday(-2), requiredHeadcount: 3 });
-    const { rows } = await pool.query(
-      `INSERT INTO signups (shift_id, volunteer_id, time_range, created_by)
-       SELECT id, $2, time_range, $2 FROM shifts WHERE id = $1 RETURNING id`,
-      [shiftId, volunteers[0].id],
-    );
-    await pool.query('UPDATE shifts SET signup_count = 1 WHERE id = $1', [shiftId]);
+    const signupId = await insertSignup(shiftId, volunteers[0]);
 
     const closed = await coord.post(`/api/shifts/${shiftId}/close`);
     expect(closed.status).toBe(200);
@@ -230,8 +233,8 @@ describe('closing', () => {
 
     const attempts = [
       await coord.post(`/api/shifts/${shiftId}/signups`).send({ volunteerId: volunteers[1].id }),
-      await vols[0].post(`/api/signups/${rows[0].id}/cancel`),
-      await coord.post(`/api/signups/${rows[0].id}/cancel`),
+      await vols[0].post(`/api/signups/${signupId}/cancel`),
+      await coord.post(`/api/signups/${signupId}/cancel`),
       await coord.patch(`/api/shifts/${shiftId}`).send({ location: 'Elsewhere' }),
       await coord.delete(`/api/shifts/${shiftId}`),
     ];
@@ -261,7 +264,7 @@ describe('editing and deleting shifts', () => {
     expect(last).toMatchObject({ event_type: 'state_changed', from_state: 'filled', to_state: 'partially_filled' });
   });
 
-  it('refuses to move a shift onto a time that would double-book one of its volunteers', async () => {
+  it('refuses to move or lengthen a shift into a time that would double-book one of its volunteers', async () => {
     const { coordinator, program, vols, coord } = await setupProgram(1);
     const date = dayFromToday(8);
     const morning = await insertShift(program.id, coordinator, { date, startTime: '09:00', durationMinutes: 60 });
@@ -269,13 +272,24 @@ describe('editing and deleting shifts', () => {
     await vols[0].post(`/api/shifts/${morning}/signups`);
     await vols[0].post(`/api/shifts/${afternoon}/signups`);
 
-    const res = await coord.patch(`/api/shifts/${afternoon}`).send({ startTime: '09:30' });
-    expect(res.status).toBe(409);
-    expect(res.body.error.code).toBe('SIGNUP_OVERLAP');
+    const moved = await coord.patch(`/api/shifts/${afternoon}`).send({ startTime: '09:30' });
+    expect(moved.status).toBe(409);
+    expect(moved.body.error.code).toBe('SIGNUP_OVERLAP');
+
+    // Changing only the duration changes the window too.
+    const lengthened = await coord.patch(`/api/shifts/${morning}`).send({ durationMinutes: 6 * 60 });
+    expect(lengthened.status).toBe(409);
+    expect(lengthened.body.error.code).toBe('SIGNUP_OVERLAP');
 
     const fine = await coord.patch(`/api/shifts/${afternoon}`).send({ startTime: '15:00' });
     expect(fine.status).toBe(200);
     expect(fine.body.shift.startTime).toBe('15:00');
+    // The database cascaded the new window onto the signup's copy.
+    const { rows } = await pool.query(
+      'SELECT su.time_range = s.time_range AS in_sync FROM signups su JOIN shifts s ON s.id = su.shift_id WHERE su.shift_id = $1',
+      [afternoon],
+    );
+    expect(rows[0].in_sync).toBe(true);
   });
 
   it('soft-deletes: signups are cancelled, the shift disappears, its history stays', async () => {
@@ -286,9 +300,31 @@ describe('editing and deleting shifts', () => {
     const res = await coord.delete(`/api/shifts/${shiftId}`);
     expect(res.status).toBe(200);
     expect(res.body.cancelledSignups).toBe(1);
-    expect((await coord.get(`/api/shifts/${shiftId}`)).status).toBe(404);
+    expect((await vols[0].get(`/api/shifts/${shiftId}`)).status).toBe(404);
 
-    const types = (await eventsFor(shiftId)).map((e) => e.event_type);
-    expect(types).toEqual(['created', 'signup_created', 'state_changed', 'signup_cancelled', 'state_changed', 'deleted']);
+    // Coordinators can still open it, read-only, with its full history.
+    const detail = await coord.get(`/api/shifts/${shiftId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.shift.deletedAt).not.toBeNull();
+    const timeline = await coord.get(`/api/shifts/${shiftId}/timeline`);
+    expect(timeline.body.events.map((e: { type: string }) => e.type)).toEqual([
+      'created',
+      'signup_created',
+      'state_changed',
+      'signup_cancelled',
+      'state_changed',
+      'deleted',
+    ]);
+  });
+
+  it('refuses to delete or reschedule a shift that has already started', async () => {
+    const { coordinator, program, coord } = await setupProgram(0);
+    const shiftId = await insertShift(program.id, coordinator, { date: dayFromToday(-1) });
+    const del = await coord.delete(`/api/shifts/${shiftId}`);
+    expect(del.status).toBe(409);
+    expect(del.body.error.code).toBe('SHIFT_STARTED');
+    const move = await coord.patch(`/api/shifts/${shiftId}`).send({ date: dayFromToday(3) });
+    expect(move.status).toBe(409);
+    expect(move.body.error.code).toBe('SHIFT_STARTED');
   });
 });

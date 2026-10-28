@@ -2,7 +2,8 @@ type Cell = string | number | null;
 
 // A cell starting with one of these is treated as a formula by Excel / Google Sheets.
 // A volunteer could otherwise register with a name like =HYPERLINK(...) ("CSV injection").
-const FORMULA_START = /^[=+\-@\t\r]/;
+// Includes the full-width forms, which some spreadsheet apps also accept.
+const FORMULA_START = /^[=+\-@\t\r\n＝＋－＠]/;
 
 /** One CSV field per RFC 4180, with text that looks like a formula neutralised. */
 export function csvCell(value: Cell): string {

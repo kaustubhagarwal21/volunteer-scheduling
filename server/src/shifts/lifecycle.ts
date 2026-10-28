@@ -3,6 +3,17 @@ import { conflict, notFound } from '../http/errors';
 import { recordEvent } from '../timeline/events';
 import { SHIFT_COLUMNS, type ShiftRow, type ShiftState } from './dto';
 
+/*
+ * Locking rules for every transaction that changes signups or shift state. Always acquire in this
+ * order, so two transactions can never wait on each other in a cycle (a deadlock):
+ *
+ *   1. the program row        FOR SHARE (FOR UPDATE when archiving)
+ *   2. the membership row     FOR KEY SHARE when signing someone up; DELETE when removing them
+ *   3. shift rows             FOR UPDATE, in ascending id order
+ *   4. volunteer schedules    advisory locks, in ascending user id order
+ *   5. signup rows
+ */
+
 /** A shift row loaded with FOR UPDATE: nobody else can change it until our transaction ends. */
 export interface LockedShift extends ShiftRow {
   /** Raw tsrange text, copied onto signups for the overlap constraint. */
@@ -10,9 +21,28 @@ export interface LockedShift extends ShiftRow {
 }
 
 /**
- * Loads a live (not deleted) shift and locks its row for the rest of the transaction.
- * Every operation that changes a shift's signups or state starts here, so two requests for the
- * same shift — e.g. two volunteers claiming the last spot — run one after the other instead of
+ * Lock 1: the program a shift belongs to, FOR SHARE. Concurrent shift operations can all hold it;
+ * archiving takes FOR UPDATE and so waits for them (and they wait for an archive in progress).
+ */
+export async function lockProgramOfShift(
+  tx: PoolClient,
+  shiftId: number,
+): Promise<{ id: number; name: string; archived: boolean }> {
+  const { rows } = await tx.query<{ id: number; name: string; archived: boolean }>(
+    `SELECT p.id, p.name, p.archived_at IS NOT NULL AS archived
+       FROM programs p
+      WHERE p.id = (SELECT program_id FROM shifts WHERE id = $1 AND deleted_at IS NULL)
+        FOR SHARE`,
+    [shiftId],
+  );
+  if (!rows[0]) throw notFound('Shift');
+  return rows[0];
+}
+
+/**
+ * Lock 3: loads a live (not deleted) shift and locks its row for the rest of the transaction.
+ * Every operation that changes a shift's signups or state goes through here, so two requests for
+ * the same shift — e.g. two volunteers claiming the last spot — run one after the other instead of
  * both reading the same count.
  */
 export async function lockShift(tx: PoolClient, shiftId: number): Promise<LockedShift> {
@@ -33,15 +63,13 @@ export async function lockShift(tx: PoolClient, shiftId: number): Promise<Locked
 const VOLUNTEER_SCHEDULE_LOCK = 1;
 
 /**
- * Makes concurrent changes to the same volunteer's signups run one at a time.
+ * Lock 4: makes concurrent changes to the same volunteer's signups run one at a time.
  *
  * The EXCLUDE constraint on signups is what guarantees no double-booking. But when two transactions
  * insert overlapping rows for one volunteer at the same instant, each sees the other's uncommitted
  * row and waits for it; Postgres breaks the deadlock by failing one with an error. Holding this lock
  * first makes the second request wait instead, then see the first signup and get a clear 409.
- *
- * Lock order everywhere: program -> shift(s) by id -> volunteer(s) by id. Advisory locks taken with
- * pg_advisory_xact_lock are released automatically at COMMIT or ROLLBACK.
+ * Advisory locks taken with pg_advisory_xact_lock are released automatically at COMMIT or ROLLBACK.
  */
 export async function lockVolunteerSchedules(tx: PoolClient, volunteerIds: number[]): Promise<void> {
   for (const id of [...new Set(volunteerIds)].sort((a, b) => a - b)) {
@@ -61,7 +89,8 @@ export function assertProgramActive(shift: Pick<ShiftRow, 'program_archived' | '
 
 /**
  * Moves signup_count by one. Postgres re-derives `state` from the new count (it is a generated
- * column), and the CHECK constraint refuses a count above the required headcount.
+ * column), the CHECK constraint refuses a count above the required headcount, and a deferred
+ * trigger verifies at commit that the count matches the active signups.
  * Also updates the in-memory locked row, so a caller can adjust the same shift more than once.
  */
 export async function adjustSignupCount(
@@ -75,33 +104,25 @@ export async function adjustSignupCount(
     [shift.id, delta],
   );
   const newState = rows[0].state;
-  await onStateChanged(tx, shift, newState, actorId);
+  await recordStateChange(tx, shift, newState, actorId);
   shift.state = newState;
   shift.signup_count += delta;
   return newState;
 }
 
 /**
- * Everything that must happen when a shift's fill state changes, whatever caused it
- * (signup, cancellation, headcount edit, closing):
- *  - the change is written to the timeline with the old and new state;
- *  - if a Filled shift drops back to Open / Partially Filled, any dismissed understaffing alert is
- *    un-dismissed, so the alert returns while the shift is within the alert window (goal 10).
+ * Writes a fill-state change to the timeline with the old and new state. Every path that can change
+ * the state (signup, cancellation, headcount edit, closing, deletion) calls this with the state it
+ * read under the row lock and the state Postgres returned after the write.
  */
-export async function onStateChanged(
+export async function recordStateChange(
   tx: PoolClient,
   shift: Pick<ShiftRow, 'id' | 'state'>,
   newState: ShiftState,
   actorId: number,
 ): Promise<void> {
   if (newState === shift.state) return;
-
   await recordEvent(tx, { shiftId: shift.id, type: 'state_changed', actorId, fromState: shift.state, toState: newState });
-
-  const droppedOutOfFilled = shift.state === 'filled' && (newState === 'open' || newState === 'partially_filled');
-  if (droppedOutOfFilled) {
-    await tx.query('UPDATE shifts SET alert_dismissed_at = NULL, alert_dismissed_by = NULL WHERE id = $1', [shift.id]);
-  }
 }
 
 /** '2026-11-07 09:00–12:00' for use in error messages. */

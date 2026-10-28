@@ -61,6 +61,9 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     return;
   }
 
-  console.error(err);
+  // Postgres puts the whole failing row in `detail` (it can include a password hash), so log a
+  // trimmed-down version rather than the raw error object.
+  const { message, stack } = err instanceof Error ? err : { message: String(err), stack: undefined };
+  console.error('Unhandled error:', { message, code: isPgError(err) ? err.code : undefined, stack });
   res.status(500).json({ error: { code: 'INTERNAL', message: 'Something went wrong on our side.' } });
 };

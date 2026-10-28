@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { AuthUser } from '../auth/types';
 import { containsPattern, QueryParams } from '../db/params';
 import { pool } from '../db/pool';
-import { IsoDate } from '../http/validate';
+import { Id, IsoDate } from '../http/validate';
 import { visibleProgramsSql } from '../programs/access';
 import { orgClock } from '../time/orgClock';
 import { SHIFT_COLUMNS, toShiftDto, type ShiftDto, type ShiftRow } from './dto';
@@ -10,15 +10,18 @@ import { SHIFT_COLUMNS, toShiftDto, type ShiftDto, type ShiftRow } from './dto';
 export const FinderQuery = z
   .object({
     q: z.string().trim().max(100).optional(),
-    programId: z.coerce.number().int().positive().optional(),
+    programId: Id.optional(),
     state: z.enum(['open', 'partially_filled', 'filled', 'closed']).optional(),
     dateFrom: IsoDate.optional(),
     dateTo: IsoDate.optional(),
     sort: z.enum(['date', 'start_time', 'state']).default('date'),
     order: z.enum(['asc', 'desc']).default('asc'),
-    page: z.coerce.number().int().min(1).default(1),
+    page: z.coerce.number().int().min(1).max(10_000).default(1),
     pageSize: z.coerce.number().int().min(1).max(100).default(20),
+    // Coordinators can list deleted shifts to read their history; volunteers never see them.
+    deleted: z.enum(['exclude', 'only']).default('exclude'),
   })
+  .strict()
   .refine((q) => !q.dateFrom || !q.dateTo || q.dateFrom <= q.dateTo, {
     message: 'dateFrom must be on or before dateTo',
     path: ['dateFrom'],
@@ -51,7 +54,8 @@ export interface FinderResult {
 export async function findShifts(user: AuthUser, query: FinderQuery): Promise<FinderResult> {
   const clock = orgClock();
   const params = new QueryParams();
-  const where = ['s.deleted_at IS NULL', visibleProgramsSql(user, params)];
+  const onlyDeleted = query.deleted === 'only' && user.role === 'coordinator';
+  const where = [onlyDeleted ? 's.deleted_at IS NOT NULL' : 's.deleted_at IS NULL', visibleProgramsSql(user, params)];
 
   // Archived programs are hidden from the cross-program list. A coordinator who opens an archived
   // program (i.e. filters by its id) still sees its shifts, read-only.

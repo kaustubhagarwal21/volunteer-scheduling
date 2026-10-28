@@ -30,9 +30,12 @@ export async function createUser(role: Role, name?: string): Promise<AuthUser> {
 
 export type Agent = ReturnType<typeof request.agent>;
 
-/** A supertest agent that keeps cookies between requests, signed in as `user`. */
+/**
+ * A supertest agent that keeps cookies between requests, signed in as `user`. Like the real client,
+ * it marks every request as JSON (the API refuses state-changing requests that aren't).
+ */
 export async function signIn(user: AuthUser): Promise<Agent> {
-  const agent = request.agent(app);
+  const agent = request.agent(app).set('Content-Type', 'application/json');
   const res = await agent.post('/api/auth/login').send({ email: user.email, password: PASSWORD });
   if (res.status !== 200) throw new Error(`Sign-in failed: ${res.status} ${JSON.stringify(res.body)}`);
   return agent;
@@ -85,6 +88,26 @@ export async function insertShift(
     rows[0].id,
     createdBy.id,
   ]);
+  return rows[0].id;
+}
+
+/**
+ * Inserts an active signup directly (e.g. on a shift that has already started, which the API would
+ * refuse a volunteer). The signup and the count change are one statement, so they commit together
+ * and pass the database's commit-time signup_count check.
+ */
+export async function insertSignup(shiftId: number, volunteer: AuthUser, createdBy: AuthUser = volunteer): Promise<number> {
+  const { rows } = await pool.query<{ id: number }>(
+    `WITH new_signup AS (
+       INSERT INTO signups (shift_id, volunteer_id, time_range, created_by)
+       SELECT id, $2, time_range, $3 FROM shifts WHERE id = $1
+       RETURNING id
+     ), bump AS (
+       UPDATE shifts SET signup_count = signup_count + 1 WHERE id = $1
+     )
+     SELECT id FROM new_signup`,
+    [shiftId, volunteer.id, createdBy.id],
+  );
   return rows[0].id;
 }
 

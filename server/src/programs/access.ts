@@ -30,6 +30,12 @@ export async function isMember(db: Queryable, programId: number, userId: number)
 }
 
 /**
+ * Shown to volunteers for anything outside their programs. It reads the same whether or not the
+ * item exists, so it explains the rule without revealing what other programs contain.
+ */
+export const NOT_VISIBLE_HINT = 'It may not exist, or it may belong to a program you are not a member of.';
+
+/**
  * The visibility rule, for a single program (or a shift/signup inside it).
  * Coordinators can see every program. A volunteer can only see active programs they belong to;
  * anything else is reported as "not found" rather than "forbidden", so its existence isn't revealed.
@@ -42,7 +48,7 @@ export async function assertCanView(
 ): Promise<void> {
   if (user.role === 'coordinator') return;
   if (program.program_archived || !(await isMember(db, program.program_id, user.id))) {
-    throw notFound(what);
+    throw notFound(what, NOT_VISIBLE_HINT);
   }
 }
 

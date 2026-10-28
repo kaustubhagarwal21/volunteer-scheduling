@@ -21,7 +21,8 @@ export const unauthenticated = (message = 'Please sign in.') => new HttpError(40
 
 export const forbidden = (message: string) => new HttpError(403, 'FORBIDDEN', message);
 
-export const notFound = (what: string) => new HttpError(404, 'NOT_FOUND', `${what} not found.`);
+export const notFound = (what: string, hint?: string) =>
+  new HttpError(404, 'NOT_FOUND', hint ? `${what} not found. ${hint}` : `${what} not found.`);
 
 /** A request that is well-formed but breaks a business rule, e.g. signing up for a Filled shift. */
 export const conflict = (code: string, message: string) => new HttpError(409, code, message);

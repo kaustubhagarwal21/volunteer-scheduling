@@ -21,7 +21,8 @@ export const SHIFT_COLUMNS = `
   s.required_headcount,
   s.signup_count,
   s.state,
-  s.closed_at`;
+  s.closed_at,
+  s.deleted_at`;
 
 export interface ShiftRow {
   id: number;
@@ -38,6 +39,7 @@ export interface ShiftRow {
   signup_count: number;
   state: ShiftState;
   closed_at: Date | null;
+  deleted_at: Date | null;
 }
 
 export interface ShiftDto {
@@ -59,6 +61,8 @@ export interface ShiftDto {
   hasStarted: boolean;
   hasEnded: boolean;
   closedAt: string | null;
+  /** Only ever non-null for coordinators, who can still open deleted shifts to read their history. */
+  deletedAt: string | null;
 }
 
 export const hasStarted = (row: Pick<ShiftRow, 'starts_at'>, clock: OrgClock) => row.starts_at <= clock.now;
@@ -84,5 +88,6 @@ export function toShiftDto(row: ShiftRow, clock: OrgClock): ShiftDto {
     hasStarted: hasStarted(row, clock),
     hasEnded: hasEnded(row, clock),
     closedAt: row.closed_at ? row.closed_at.toISOString() : null,
+    deletedAt: row.deleted_at ? row.deleted_at.toISOString() : null,
   };
 }

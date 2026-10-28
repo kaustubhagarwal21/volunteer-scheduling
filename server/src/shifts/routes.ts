@@ -1,13 +1,12 @@
 import { Router } from 'express';
-import { currentUser, requireAuth, requireCoordinator } from '../auth/middleware';
+import { currentUser, requireCoordinator } from '../auth/middleware';
 import { IdParam, parse } from '../http/validate';
 import { signUp } from '../signups/service';
 import { FinderQuery, findShifts } from './finder';
-import { NoteBody, ShiftPatch, SignupBody } from './schemas';
+import { NoteBody, rejectDerivedFields, ShiftPatch, SignupBody } from './schemas';
 import { addNote, closeShift, deleteShift, getShiftDetail, getTimeline, updateShift } from './service';
 
 export const shiftsRouter = Router();
-shiftsRouter.use(requireAuth);
 
 shiftsRouter.get('/', async (req, res) => {
   res.json(await findShifts(currentUser(req), parse(FinderQuery, req.query)));
@@ -20,6 +19,7 @@ shiftsRouter.get('/:id', async (req, res) => {
 
 shiftsRouter.patch('/:id', requireCoordinator, async (req, res) => {
   const { id } = parse(IdParam, req.params);
+  rejectDerivedFields(req.body);
   res.json({ shift: await updateShift(currentUser(req), id, parse(ShiftPatch, req.body)) });
 });
 

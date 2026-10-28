@@ -5,8 +5,15 @@ import { badRequest, conflict, notFound } from '../http/errors';
 import { assertCanView, lockActiveProgram } from '../programs/access';
 import { orgClock, type OrgClock } from '../time/orgClock';
 import { recordEvent } from '../timeline/events';
-import { SHIFT_COLUMNS, hasEnded, toShiftDto, type ShiftDto, type ShiftRow, type ShiftState } from './dto';
-import { assertProgramActive, describeWindow, lockShift, lockVolunteerSchedules, onStateChanged } from './lifecycle';
+import { SHIFT_COLUMNS, hasEnded, hasStarted, toShiftDto, type ShiftDto, type ShiftRow, type ShiftState } from './dto';
+import {
+  assertProgramActive,
+  describeWindow,
+  lockProgramOfShift,
+  lockShift,
+  lockVolunteerSchedules,
+  recordStateChange,
+} from './lifecycle';
 
 export interface ShiftInput {
   date: string;
@@ -23,11 +30,32 @@ function assertStartsInFuture(date: string, startTime: string, clock: OrgClock):
   }
 }
 
-export async function loadShift(db: Queryable, shiftId: number, clock: OrgClock): Promise<ShiftDto> {
+/** Friendly version of the unique (program, date, start time) index, which stays as the backstop. */
+async function assertSlotFree(tx: PoolClient, programId: number, date: string, startTime: string, exceptShiftId = 0) {
+  const { rowCount } = await tx.query(
+    `SELECT 1 FROM shifts
+      WHERE program_id = $1 AND shift_date = $2 AND start_time = $3 AND deleted_at IS NULL AND id <> $4`,
+    [programId, date, startTime, exceptShiftId],
+  );
+  if (rowCount) {
+    throw conflict('SLOT_TAKEN', `This program already has a shift on ${date} at ${startTime}.`);
+  }
+}
+
+/**
+ * Loads one shift for display. Deleted shifts stay readable for coordinators only, so the history
+ * of a deleted shift is never lost to them.
+ */
+export async function loadShift(
+  db: Queryable,
+  shiftId: number,
+  clock: OrgClock,
+  options: { includeDeleted?: boolean } = {},
+): Promise<ShiftDto> {
   const { rows } = await db.query<ShiftRow>(
     `SELECT ${SHIFT_COLUMNS} FROM shifts s JOIN programs p ON p.id = s.program_id
-      WHERE s.id = $1 AND s.deleted_at IS NULL`,
-    [shiftId],
+      WHERE s.id = $1 AND ($2 OR s.deleted_at IS NULL)`,
+    [shiftId, options.includeDeleted ?? false],
   );
   if (!rows[0]) throw notFound('Shift');
   return toShiftDto(rows[0], clock);
@@ -39,7 +67,7 @@ export async function createShift(actor: AuthUser, programId: number, input: Shi
 
   return withTransaction(async (tx) => {
     await lockActiveProgram(tx, programId);
-    // A clash on (program, date, start time) is turned into 409 SLOT_TAKEN by the error handler.
+    await assertSlotFree(tx, programId, input.date, input.startTime);
     const { rows } = await tx.query<{ id: number }>(
       `INSERT INTO shifts (program_id, shift_date, start_time, duration_minutes, location, required_headcount, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -55,6 +83,7 @@ export async function createShift(actor: AuthUser, programId: number, input: Shi
 export async function updateShift(actor: AuthUser, shiftId: number, patch: Partial<ShiftInput>): Promise<ShiftDto> {
   const clock = orgClock();
   return withTransaction(async (tx) => {
+    await lockProgramOfShift(tx, shiftId);
     const shift = await lockShift(tx, shiftId);
     assertProgramActive(shift);
     if (shift.state === 'closed') {
@@ -83,34 +112,39 @@ export async function updateShift(actor: AuthUser, shiftId: number, patch: Parti
           `${shift.signup_count}. Cancel signups first.`,
       );
     }
-    const timeChanged = 'date' in changes || 'startTime' in changes || 'durationMinutes' in changes;
-    if (timeChanged) assertStartsInFuture(next.date, next.startTime, clock);
 
-    const { rows } = await tx.query<{ state: ShiftState; time_range: string }>(
+    const timeChanged = 'date' in changes || 'startTime' in changes || 'durationMinutes' in changes;
+    if (timeChanged) {
+      if (hasStarted(shift, clock)) {
+        throw conflict('SHIFT_STARTED', 'This shift has already started, so its date and time can no longer change.');
+      }
+      assertStartsInFuture(next.date, next.startTime, clock);
+      await assertSlotFree(tx, shift.program_id, next.date, next.startTime, shiftId);
+      await assertNoDoubleBooking(tx, shiftId, next);
+    }
+
+    // Changing the window regenerates time_range, and the foreign key cascades the new window to
+    // the signups' copies (the overlap constraint re-checks them on the way).
+    const { rows } = await tx.query<{ state: ShiftState }>(
       `UPDATE shifts
           SET shift_date = $2, start_time = $3, duration_minutes = $4, location = $5, required_headcount = $6,
-              updated_at = now(),
-              -- A rescheduled shift is effectively a new slot: any dismissed alert no longer applies.
-              alert_dismissed_at = CASE WHEN $7 THEN NULL ELSE alert_dismissed_at END,
-              alert_dismissed_by = CASE WHEN $7 THEN NULL ELSE alert_dismissed_by END
+              updated_at = now()
         WHERE id = $1
-        RETURNING state, time_range::text`,
-      [shiftId, next.date, next.startTime, next.durationMinutes, next.location, next.requiredHeadcount, timeChanged],
+        RETURNING state`,
+      [shiftId, next.date, next.startTime, next.durationMinutes, next.location, next.requiredHeadcount],
     );
 
-    if (timeChanged) await moveSignupsToNewTime(tx, shiftId, rows[0].time_range);
-
     await recordEvent(tx, { shiftId, type: 'updated', actorId: actor.id, details: { changes } });
-    await onStateChanged(tx, shift, rows[0].state, actor.id);
+    await recordStateChange(tx, shift, rows[0].state, actor.id);
     return loadShift(tx, shiftId, clock);
   });
 }
 
 /**
- * Signups carry a copy of their shift's time range (for the overlap constraint). When a shift is
- * rescheduled, refuse if that would double-book any of its volunteers, otherwise update the copies.
+ * Before moving a shift, refuse if any volunteer on it already holds another signup at the new
+ * time. The database would refuse too (overlap constraint), but this names who and where.
  */
-async function moveSignupsToNewTime(tx: PoolClient, shiftId: number, newRange: string): Promise<void> {
+async function assertNoDoubleBooking(tx: PoolClient, shiftId: number, next: ShiftInput): Promise<void> {
   const volunteers = await tx.query<{ volunteer_id: number }>(
     'SELECT volunteer_id FROM signups WHERE shift_id = $1 AND cancelled_at IS NULL',
     [shiftId],
@@ -118,20 +152,23 @@ async function moveSignupsToNewTime(tx: PoolClient, shiftId: number, newRange: s
   await lockVolunteerSchedules(tx, volunteers.rows.map((row) => row.volunteer_id));
 
   const { rows } = await tx.query<{ volunteer_name: string; program_name: string; date: string; start_time: string; ends_at: string }>(
-    `SELECT u.name AS volunteer_name, p.name AS program_name, s.shift_date AS date,
+    `WITH new_window AS (
+       SELECT tsrange($2::date + $3::time, $2::date + $3::time + make_interval(mins => $4), '[)') AS r
+     )
+     SELECT u.name AS volunteer_name, p.name AS program_name, s.shift_date AS date,
             to_char(s.start_time, 'HH24:MI') AS start_time,
             to_char(upper(s.time_range), 'YYYY-MM-DD HH24:MI:SS') AS ends_at
        FROM signups mine
        JOIN signups other ON other.volunteer_id = mine.volunteer_id
                          AND other.shift_id <> mine.shift_id
                          AND other.cancelled_at IS NULL
-                         AND other.time_range && $2::tsrange
+       JOIN new_window ON other.time_range && new_window.r
        JOIN users u ON u.id = mine.volunteer_id
        JOIN shifts s ON s.id = other.shift_id
        JOIN programs p ON p.id = s.program_id
       WHERE mine.shift_id = $1 AND mine.cancelled_at IS NULL
       LIMIT 1`,
-    [shiftId, newRange],
+    [shiftId, next.date, next.startTime, next.durationMinutes],
   );
   const clash = rows[0];
   if (clash) {
@@ -141,23 +178,28 @@ async function moveSignupsToNewTime(tx: PoolClient, shiftId: number, newRange: s
         `${clash.program_name} (${describeWindow(clash)}).`,
     );
   }
-  await tx.query('UPDATE signups SET time_range = $2::tsrange WHERE shift_id = $1 AND cancelled_at IS NULL', [
-    shiftId,
-    newRange,
-  ]);
 }
 
 /**
- * Soft delete. The row stays (with deleted_at) because the shift's timeline must outlive it —
- * history can't be destroyed, even by coordinators. Active signups are cancelled first so the
- * volunteers are free again, and every step is recorded.
+ * Soft delete, for shifts that haven't started. The row stays (with deleted_at) because the shift's
+ * timeline must outlive it — history can't be destroyed, even by coordinators. Active signups are
+ * cancelled first so the volunteers are free again, and every step is recorded. A shift that has
+ * started is part of the record: close it instead.
  */
 export async function deleteShift(actor: AuthUser, shiftId: number): Promise<{ cancelledSignups: number }> {
+  const clock = orgClock();
   return withTransaction(async (tx) => {
+    await lockProgramOfShift(tx, shiftId);
     const shift = await lockShift(tx, shiftId);
     assertProgramActive(shift);
     if (shift.state === 'closed') {
       throw conflict('SHIFT_CLOSED', "Closed shifts are part of the record and can't be deleted.");
+    }
+    if (hasStarted(shift, clock)) {
+      throw conflict(
+        'SHIFT_STARTED',
+        'This shift has already started, so it is part of the record. Close it instead (cancel any no-shows first).',
+      );
     }
 
     const cancelled = await tx.query<{ volunteer_id: number }>(
@@ -181,14 +223,10 @@ export async function deleteShift(actor: AuthUser, shiftId: number): Promise<{ c
         WHERE id = $1 RETURNING state`,
       [shiftId, actor.id],
     );
-    await onStateChanged(tx, shift, rows[0].state, actor.id);
-    await recordEvent(tx, {
-      shiftId,
-      type: 'deleted',
-      actorId: actor.id,
-      details: { cancelledSignups: cancelled.rowCount ?? 0 },
-    });
-    return { cancelledSignups: cancelled.rowCount ?? 0 };
+    await recordStateChange(tx, shift, rows[0].state, actor.id);
+    const cancelledSignups = cancelled.rowCount ?? 0;
+    await recordEvent(tx, { shiftId, type: 'deleted', actorId: actor.id, details: { cancelledSignups } });
+    return { cancelledSignups };
   });
 }
 
@@ -196,6 +234,7 @@ export async function deleteShift(actor: AuthUser, shiftId: number): Promise<{ c
 export async function closeShift(actor: AuthUser, shiftId: number): Promise<ShiftDto> {
   const clock = orgClock();
   return withTransaction(async (tx) => {
+    await lockProgramOfShift(tx, shiftId);
     const shift = await lockShift(tx, shiftId);
     assertProgramActive(shift);
     if (shift.state === 'closed') throw conflict('ALREADY_CLOSED', 'This shift is already closed.');
@@ -209,7 +248,7 @@ export async function closeShift(actor: AuthUser, shiftId: number): Promise<Shif
       'UPDATE shifts SET closed_at = now(), closed_by = $2, updated_at = now() WHERE id = $1 RETURNING state',
       [shiftId, actor.id],
     );
-    await onStateChanged(tx, shift, rows[0].state, actor.id);
+    await recordStateChange(tx, shift, rows[0].state, actor.id);
     return loadShift(tx, shiftId, clock);
   });
 }
@@ -217,6 +256,7 @@ export async function closeShift(actor: AuthUser, shiftId: number): Promise<Shif
 /** Coordinators' notes are timeline entries, so they can be added but never edited or removed. */
 export async function addNote(actor: AuthUser, shiftId: number, note: string): Promise<void> {
   await withTransaction(async (tx) => {
+    await lockProgramOfShift(tx, shiftId);
     const shift = await lockShift(tx, shiftId);
     assertProgramActive(shift);
     await recordEvent(tx, { shiftId, type: 'note', actorId: actor.id, note });
@@ -230,10 +270,15 @@ export interface SignupSummary {
   createdAt: string;
 }
 
+async function loadVisibleShift(actor: AuthUser, shiftId: number, clock: OrgClock): Promise<ShiftDto> {
+  const shift = await loadShift(pool, shiftId, clock, { includeDeleted: actor.role === 'coordinator' });
+  await assertCanView(pool, actor, { program_id: shift.programId, program_archived: shift.programArchived }, 'Shift');
+  return shift;
+}
+
 export async function getShiftDetail(actor: AuthUser, shiftId: number) {
   const clock = orgClock();
-  const shift = await loadShift(pool, shiftId, clock);
-  await assertCanView(pool, actor, { program_id: shift.programId, program_archived: shift.programArchived }, 'Shift');
+  const shift = await loadVisibleShift(actor, shiftId, clock);
 
   const { rows } = await pool.query<{
     id: number;
@@ -285,9 +330,9 @@ export interface TimelineEntry {
   createdAt: string;
 }
 
+/** Goal 9: everything that ever happened to a shift, oldest first. Readable by anyone who can see the shift. */
 export async function getTimeline(actor: AuthUser, shiftId: number): Promise<TimelineEntry[]> {
-  const shift = await loadShift(pool, shiftId, orgClock());
-  await assertCanView(pool, actor, { program_id: shift.programId, program_archived: shift.programArchived }, 'Shift');
+  await loadVisibleShift(actor, shiftId, orgClock());
 
   const { rows } = await pool.query(
     `SELECT e.id, e.event_type, e.from_state, e.to_state, e.note, e.details, e.created_at,

@@ -15,12 +15,21 @@ describe('registration', () => {
     expect(me.body.user.email).toBe(email);
   });
 
-  it('ignores any attempt to choose the coordinator role', async () => {
+  it('refuses any attempt to choose a role', async () => {
+    const email = `sneaky-${unique()}@test.local`;
     const res = await request(app)
       .post('/api/auth/register')
-      .send({ name: 'Sneaky', email: `sneaky-${unique()}@test.local`, password: 'longenough', role: 'coordinator' });
-    expect(res.status).toBe(201);
-    expect(res.body.user.role).toBe('volunteer');
+      .send({ name: 'Sneaky', email, password: 'longenough', role: 'coordinator' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toMatch(/role/);
+    const login = await request(app).post('/api/auth/login').send({ email, password: 'longenough' });
+    expect(login.status).toBe(401);
+  });
+
+  it('accepts a mixed-case email at sign-in', async () => {
+    const user = await createUser('volunteer');
+    const res = await request(app).post('/api/auth/login').send({ email: ` ${user.email.toUpperCase()} `, password: PASSWORD });
+    expect(res.status).toBe(200);
   });
 
   it('normalises email case and rejects duplicates', async () => {
@@ -73,7 +82,7 @@ describe('sign in and out', () => {
       .headers['set-cookie'];
 
     // Log out the second session, then replay its old cookie by hand.
-    await request(app).post('/api/auth/logout').set('Cookie', cookie);
+    await request(app).post('/api/auth/logout').set('Cookie', cookie).send({});
     const replay = await request(app).get('/api/auth/me').set('Cookie', cookie);
     expect(replay.status).toBe(401);
 

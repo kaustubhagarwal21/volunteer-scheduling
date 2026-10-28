@@ -1,8 +1,14 @@
 -- Initial schema for the volunteer scheduling system.
 --
 -- Times: a shift's date and start time are the organisation's local wall-clock time
--- (ORG_TIMEZONE). The server sets each connection's TimeZone to that zone, so
--- CURRENT_DATE / LOCALTIMESTAMP are "now" in the same terms as the shift columns.
+-- (ORG_TIMEZONE). The application computes the organisation's "today" and "now" itself and passes
+-- them into queries, so nothing here depends on the database session's time zone.
+--
+-- Rules the database enforces on its own (the application checks them first, for clear messages):
+--   * a shift's fill state is a generated column: nobody can write it;
+--   * signup_count must equal the number of active signups at commit, and never exceed the headcount;
+--   * one volunteer can never hold two active signups whose time windows overlap;
+--   * shift history (shift_events) is append-only.
 
 CREATE EXTENSION IF NOT EXISTS btree_gist; -- lets the overlap constraint mix "=" on ids with "&&" on ranges
 
@@ -64,14 +70,15 @@ CREATE INDEX program_members_user_id_idx ON program_members (user_id);
 CREATE TABLE shifts (
   id                 INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   program_id         INTEGER NOT NULL REFERENCES programs(id),
-  shift_date         DATE NOT NULL,
-  start_time         TIME(0) NOT NULL,
+  shift_date         DATE NOT NULL CHECK (shift_date BETWEEN '2000-01-01' AND '2999-12-31'),
+  -- Whole minutes only, and never '24:00' (which would be the next day's 00:00 in disguise).
+  start_time         TIME(0) NOT NULL CHECK (start_time < '24:00' AND date_part('second', start_time) = 0),
   duration_minutes   INTEGER NOT NULL CHECK (duration_minutes BETWEEN 15 AND 1440),
   location           TEXT NOT NULL CHECK (length(btrim(location)) > 0),
   required_headcount INTEGER NOT NULL CHECK (required_headcount BETWEEN 1 AND 500),
 
-  -- Denormalised count of active signups, maintained in the same transaction as every
-  -- signup/cancellation (under a row lock). The CHECK below makes over-filling impossible.
+  -- Denormalised count of active signups. Maintained by the application in the same transaction
+  -- as each signup/cancellation (under a row lock); verified at commit by a trigger below.
   signup_count       INTEGER NOT NULL DEFAULT 0,
 
   closed_at          TIMESTAMPTZ,
@@ -84,7 +91,7 @@ CREATE TABLE shifts (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-  -- Local wall-clock window [start, end), used for overlap checks and "has it passed".
+  -- Local wall-clock window [start, end), used for overlap checks and "has it started / ended".
   time_range TSRANGE GENERATED ALWAYS AS (
     tsrange(
       shift_date + start_time,
@@ -106,7 +113,9 @@ CREATE TABLE shifts (
   CONSTRAINT shifts_signup_count_within_headcount
     CHECK (signup_count >= 0 AND signup_count <= required_headcount),
   CONSTRAINT shifts_closed_fields_together CHECK ((closed_at IS NULL) = (closed_by IS NULL)),
-  CONSTRAINT shifts_deleted_fields_together CHECK ((deleted_at IS NULL) = (deleted_by IS NULL))
+  CONSTRAINT shifts_deleted_fields_together CHECK ((deleted_at IS NULL) = (deleted_by IS NULL)),
+  -- Target for the signups foreign key below (id alone is already unique).
+  CONSTRAINT shifts_id_time_range_key UNIQUE (id, time_range)
 );
 
 -- One live shift per program per date+start time. This is also how recurring generation
@@ -117,15 +126,19 @@ CREATE INDEX shifts_date_idx ON shifts (shift_date, start_time) WHERE deleted_at
 
 CREATE TABLE signups (
   id           INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  shift_id     INTEGER NOT NULL REFERENCES shifts(id),
+  shift_id     INTEGER NOT NULL,
   volunteer_id INTEGER NOT NULL REFERENCES users(id),
-  -- Copy of shifts.time_range so the exclusion constraint below can see it.
+  -- Copy of the shift's time window so the overlap constraint below can see it. The composite
+  -- foreign key guarantees it always equals the shift's window: rescheduling a shift cascades
+  -- here, and the overlap constraint re-checks the volunteers on the way.
   time_range   TSRANGE NOT NULL,
   created_by   INTEGER NOT NULL REFERENCES users(id),
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   cancelled_at TIMESTAMPTZ,
   cancelled_by INTEGER REFERENCES users(id),
 
+  CONSTRAINT signups_shift_window_fkey
+    FOREIGN KEY (shift_id, time_range) REFERENCES shifts (id, time_range) ON UPDATE CASCADE,
   CONSTRAINT signups_cancel_fields_together CHECK ((cancelled_at IS NULL) = (cancelled_by IS NULL)),
   -- No volunteer can hold two active signups whose time windows overlap, even under
   -- concurrent requests.
@@ -134,8 +147,40 @@ CREATE TABLE signups (
 );
 CREATE UNIQUE INDEX signups_one_active_per_shift_uidx
   ON signups (shift_id, volunteer_id) WHERE cancelled_at IS NULL;
+CREATE INDEX signups_shift_id_idx ON signups (shift_id);
 CREATE INDEX signups_volunteer_id_idx ON signups (volunteer_id);
 CREATE INDEX signups_created_at_idx ON signups (created_at);
+
+-- At COMMIT, every shift whose count or signups changed must have signup_count equal to its
+-- number of active signups. A code path that forgets to adjust the count, or anyone setting it by
+-- hand, fails here instead of silently corrupting the fill state.
+CREATE FUNCTION shifts_check_signup_count() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  target integer;
+  stored integer;
+  actual integer;
+BEGIN
+  IF TG_TABLE_NAME = 'shifts' THEN target := NEW.id; ELSE target := NEW.shift_id; END IF;
+  SELECT signup_count INTO stored FROM shifts WHERE id = target;
+  SELECT count(*) INTO actual FROM signups WHERE shift_id = target AND cancelled_at IS NULL;
+  IF stored <> actual THEN
+    RAISE EXCEPTION 'shift %: signup_count is % but it has % active signups', target, stored, actual
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+CREATE CONSTRAINT TRIGGER shifts_signup_count_matches
+  AFTER INSERT OR UPDATE OF signup_count ON shifts
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION shifts_check_signup_count();
+
+CREATE CONSTRAINT TRIGGER signups_signup_count_matches
+  AFTER INSERT OR UPDATE OF cancelled_at ON signups
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION shifts_check_signup_count();
 
 -- Append-only history for every shift.
 CREATE TABLE shift_events (

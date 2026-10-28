@@ -2,12 +2,13 @@ import type { PoolClient } from 'pg';
 import type { AuthUser } from '../auth/types';
 import { withTransaction } from '../db/pool';
 import { badRequest, conflict, forbidden, notFound } from '../http/errors';
-import { assertCanView, isMember } from '../programs/access';
+import { assertCanView, NOT_VISIBLE_HINT } from '../programs/access';
 import { hasStarted } from '../shifts/dto';
 import {
   adjustSignupCount,
   assertProgramActive,
   describeWindow,
+  lockProgramOfShift,
   lockShift,
   lockVolunteerSchedules,
   type LockedShift,
@@ -15,10 +16,18 @@ import {
 import { orgClock } from '../time/orgClock';
 import { recordEvent } from '../timeline/events';
 
+/*
+ * Who may sign up and cancel, and until when (goal 4):
+ *   - volunteers act only for themselves, and only before the shift starts;
+ *   - coordinators act for any member until the shift is Closed, so they can record walk-ins
+ *     and no-shows after the start;
+ *   - Closed locks everyone out.
+ */
+
 /**
- * Creates a signup, enforcing every rule from goal 4. Runs in one transaction with the shift row
- * locked, so the checks and the write cannot be interleaved with another request for the same shift.
- * The database re-checks the critical ones (headcount CHECK, overlap EXCLUDE) as a backstop.
+ * Creates a signup, enforcing every rule from goal 4 in one transaction (see lifecycle.ts for the
+ * lock order). The database re-checks the critical rules as a backstop: the headcount CHECK, the
+ * overlap EXCLUDE constraint and the commit-time signup_count check.
  */
 export async function signUp(actor: AuthUser, shiftId: number, requestedVolunteerId?: number): Promise<{ id: number }> {
   if (actor.role === 'volunteer' && requestedVolunteerId !== undefined && requestedVolunteerId !== actor.id) {
@@ -29,10 +38,20 @@ export async function signUp(actor: AuthUser, shiftId: number, requestedVoluntee
 
   const clock = orgClock();
   return withTransaction(async (tx) => {
-    const shift = await lockShift(tx, shiftId);
-    await assertCanView(tx, actor, shift, 'Shift');
-    assertProgramActive(shift);
+    const volunteer = await loadVolunteer(tx, volunteerId);
+    const program = await lockProgramOfShift(tx, shiftId);
 
+    // Holding this lock until commit means a concurrent "remove member" waits for us (and then
+    // cancels this signup), or we wait for it (and then see that the membership is gone).
+    const membership = await tx.query(
+      'SELECT 1 FROM program_members WHERE program_id = $1 AND user_id = $2 FOR KEY SHARE',
+      [program.id, volunteer.id],
+    );
+    const isMember = membership.rowCount === 1;
+    if (actor.role === 'volunteer' && (!isMember || program.archived)) throw notFound('Shift', NOT_VISIBLE_HINT);
+
+    const shift = await lockShift(tx, shiftId);
+    assertProgramActive(shift);
     if (shift.state === 'closed') {
       throw conflict('SHIFT_CLOSED', 'This shift is closed, so it no longer accepts signups.');
     }
@@ -42,20 +61,22 @@ export async function signUp(actor: AuthUser, shiftId: number, requestedVoluntee
         `This shift is already filled (${shift.signup_count} of ${shift.required_headcount} spots taken).`,
       );
     }
-    if (hasStarted(shift, clock)) {
-      throw conflict('SHIFT_STARTED', 'This shift has already started, so it can no longer take signups.');
-    }
-
-    const volunteer = await loadVolunteer(tx, volunteerId);
-    await lockVolunteerSchedules(tx, [volunteer.id]);
-    const isSelf = volunteer.id === actor.id;
-    if (!(await isMember(tx, shift.program_id, volunteer.id))) {
+    if (actor.role === 'volunteer' && hasStarted(shift, clock)) {
       throw conflict(
-        'NOT_A_MEMBER',
-        `${isSelf ? "You aren't" : `${volunteer.name} isn't`} a member of ${shift.program_name}. ` +
-          'A coordinator needs to add them to the program first.',
+        'SHIFT_STARTED',
+        'This shift has already started, so you can no longer sign up for it. A coordinator can still add you.',
       );
     }
+
+    const isSelf = volunteer.id === actor.id;
+    if (!isMember) {
+      throw conflict(
+        'NOT_A_MEMBER',
+        `${volunteer.name} isn't a member of ${shift.program_name}. Add them to the program first.`,
+      );
+    }
+
+    await lockVolunteerSchedules(tx, [volunteer.id]);
 
     const existing = await tx.query(
       'SELECT 1 FROM signups WHERE shift_id = $1 AND volunteer_id = $2 AND cancelled_at IS NULL',
@@ -90,10 +111,12 @@ export async function signUp(actor: AuthUser, shiftId: number, requestedVoluntee
 export async function cancelSignup(actor: AuthUser, signupId: number): Promise<void> {
   const clock = orgClock();
   await withTransaction(async (tx) => {
-    // Lock the shift before the signup, the same order signUp uses, so the two never deadlock.
+    // shift_id never changes, so it is safe to read before taking any lock.
     const ref = await tx.query<{ shift_id: number }>('SELECT shift_id FROM signups WHERE id = $1', [signupId]);
     if (!ref.rows[0]) throw notFound('Signup');
+    await lockProgramOfShift(tx, ref.rows[0].shift_id);
     const shift = await lockShift(tx, ref.rows[0].shift_id);
+    // Visibility before ownership, so a volunteer can't probe other programs' signup ids.
     await assertCanView(tx, actor, shift, 'Signup');
 
     const { rows } = await tx.query<{ volunteer_id: number; cancelled_at: Date | null }>(
@@ -109,7 +132,6 @@ export async function cancelSignup(actor: AuthUser, signupId: number): Promise<v
     if (shift.state === 'closed') {
       throw conflict('SHIFT_CLOSED', 'This shift is closed, so its signups can no longer be changed.');
     }
-    // Coordinators may still cancel after the start (e.g. to record a no-show) until the shift is closed.
     if (actor.role === 'volunteer' && hasStarted(shift, clock)) {
       throw conflict(
         'SHIFT_STARTED',
@@ -122,8 +144,12 @@ export async function cancelSignup(actor: AuthUser, signupId: number): Promise<v
 }
 
 /**
- * The write half of a cancellation, shared with "remove member" and "delete shift".
- * The caller must hold the shift lock and has already checked the rules.
+ * The write half of a cancellation, shared with "remove member". The caller holds the shift lock
+ * and has already checked the rules.
+ *
+ * Goal 10: if this cancellation drops a Filled shift back to Open / Partially Filled, any dismissed
+ * understaffing alert is un-dismissed, so it shows again while the shift is within the alert window.
+ * A cancellation is the only thing that re-raises a dismissed alert, exactly as the brief states.
  */
 export async function cancelLockedSignup(
   tx: PoolClient,
@@ -140,7 +166,12 @@ export async function cancelLockedSignup(
     volunteerId: signup.volunteerId,
     details: reason ? { reason } : undefined,
   });
+
+  const wasFilled = shift.state === 'filled';
   await adjustSignupCount(tx, shift, -1, actorId);
+  if (wasFilled) {
+    await tx.query('UPDATE shifts SET alert_dismissed_at = NULL, alert_dismissed_by = NULL WHERE id = $1', [shift.id]);
+  }
 }
 
 async function loadVolunteer(tx: PoolClient, userId: number): Promise<{ id: number; name: string }> {
