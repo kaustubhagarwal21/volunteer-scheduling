@@ -7,6 +7,8 @@ import { authRouter } from './auth/routes';
 import { config } from './config';
 import { errorHandler } from './http/errorHandler';
 import { notFound } from './http/errors';
+import { shiftsRouter } from './shifts/routes';
+import { signupsRouter } from './signups/routes';
 
 const CLIENT_DIST = path.resolve(__dirname, '../../client/dist');
 
@@ -26,6 +28,8 @@ export function createApp() {
     res.json({ ok: true });
   });
   api.use('/auth', authRouter);
+  api.use('/shifts', shiftsRouter);
+  api.use('/signups', signupsRouter);
   api.use(() => {
     throw notFound('API route');
   });
