@@ -28,6 +28,27 @@ export async function lockShift(tx: PoolClient, shiftId: number): Promise<Locked
   return rows[0];
 }
 
+// First half of the two-key advisory lock id that means "this volunteer's schedule"; the second
+// half is the user id.
+const VOLUNTEER_SCHEDULE_LOCK = 1;
+
+/**
+ * Makes concurrent changes to the same volunteer's signups run one at a time.
+ *
+ * The EXCLUDE constraint on signups is what guarantees no double-booking. But when two transactions
+ * insert overlapping rows for one volunteer at the same instant, each sees the other's uncommitted
+ * row and waits for it; Postgres breaks the deadlock by failing one with an error. Holding this lock
+ * first makes the second request wait instead, then see the first signup and get a clear 409.
+ *
+ * Lock order everywhere: program -> shift(s) by id -> volunteer(s) by id. Advisory locks taken with
+ * pg_advisory_xact_lock are released automatically at COMMIT or ROLLBACK.
+ */
+export async function lockVolunteerSchedules(tx: PoolClient, volunteerIds: number[]): Promise<void> {
+  for (const id of [...new Set(volunteerIds)].sort((a, b) => a - b)) {
+    await tx.query('SELECT pg_advisory_xact_lock($1, $2)', [VOLUNTEER_SCHEDULE_LOCK, id]);
+  }
+}
+
 /** Archived programs are frozen: readable, but nothing about them changes until restored. */
 export function assertProgramActive(shift: Pick<ShiftRow, 'program_archived' | 'program_name'>): void {
   if (shift.program_archived) {

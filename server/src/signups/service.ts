@@ -9,6 +9,7 @@ import {
   assertProgramActive,
   describeWindow,
   lockShift,
+  lockVolunteerSchedules,
   type LockedShift,
 } from '../shifts/lifecycle';
 import { orgClock } from '../time/orgClock';
@@ -46,6 +47,7 @@ export async function signUp(actor: AuthUser, shiftId: number, requestedVoluntee
     }
 
     const volunteer = await loadVolunteer(tx, volunteerId);
+    await lockVolunteerSchedules(tx, [volunteer.id]);
     const isSelf = volunteer.id === actor.id;
     if (!(await isMember(tx, shift.program_id, volunteer.id))) {
       throw conflict(

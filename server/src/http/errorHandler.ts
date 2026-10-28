@@ -52,6 +52,15 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     return;
   }
 
+  // Deadlock / serialization failure: Postgres rolled our transaction back so another could finish.
+  // Nothing was written; the request is safe to retry.
+  if (isPgError(err) && (err.code === '40P01' || err.code === '40001')) {
+    res.status(409).json({
+      error: { code: 'CONCURRENT_CHANGE', message: 'Someone else changed this at the same moment. Please try again.' },
+    });
+    return;
+  }
+
   console.error(err);
   res.status(500).json({ error: { code: 'INTERNAL', message: 'Something went wrong on our side.' } });
 };

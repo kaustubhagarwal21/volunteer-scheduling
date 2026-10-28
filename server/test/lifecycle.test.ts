@@ -98,23 +98,28 @@ describe('signup rules', () => {
     expect((await agent.post(`/api/shifts/${touching}/signups`)).status).toBe(201);
   });
 
+  // Regression test: before volunteer schedule locks, about 1 in 12 of these races hit a deadlock
+  // inside the EXCLUDE constraint check and returned 500. Repeat it to make that visible.
   it('cannot double-book a volunteer even when both requests arrive at once', async () => {
     const coordinator = await createUser('coordinator');
-    const volunteer = await createUser('volunteer');
     const program = await createProgram(coordinator);
-    await addMember(program.id, volunteer, coordinator);
-    const date = dayFromToday(7);
-    const a = await insertShift(program.id, coordinator, { date, startTime: '09:00' });
-    const b = await insertShift(program.id, coordinator, { date, startTime: '10:00' });
+    for (let round = 0; round < 20; round += 1) {
+      const volunteer = await createUser('volunteer');
+      await addMember(program.id, volunteer, coordinator);
+      const date = dayFromToday(7 + round);
+      const a = await insertShift(program.id, coordinator, { date, startTime: '09:00' });
+      const b = await insertShift(program.id, coordinator, { date, startTime: '10:00' });
 
-    const agent = await signIn(volunteer);
-    const results = await Promise.all([a, b].map((id) => agent.post(`/api/shifts/${id}/signups`)));
-    expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
-    const { rows } = await pool.query(
-      'SELECT count(*) AS active FROM signups WHERE volunteer_id = $1 AND cancelled_at IS NULL',
-      [volunteer.id],
-    );
-    expect(rows[0].active).toBe(1);
+      const agent = await signIn(volunteer);
+      const results = await Promise.all([a, b].map((id) => agent.post(`/api/shifts/${id}/signups`)));
+      expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+      expect(results.find((r) => r.status === 409)?.body.error.code).toBe('SIGNUP_OVERLAP');
+      const { rows } = await pool.query(
+        'SELECT count(*) AS active FROM signups WHERE volunteer_id = $1 AND cancelled_at IS NULL',
+        [volunteer.id],
+      );
+      expect(rows[0].active).toBe(1);
+    }
   });
 
   it('rejects signing up twice for the same shift', async () => {

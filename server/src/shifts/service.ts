@@ -6,7 +6,7 @@ import { assertCanView, lockActiveProgram } from '../programs/access';
 import { orgClock, type OrgClock } from '../time/orgClock';
 import { recordEvent } from '../timeline/events';
 import { SHIFT_COLUMNS, hasEnded, toShiftDto, type ShiftDto, type ShiftRow, type ShiftState } from './dto';
-import { assertProgramActive, describeWindow, lockShift, onStateChanged } from './lifecycle';
+import { assertProgramActive, describeWindow, lockShift, lockVolunteerSchedules, onStateChanged } from './lifecycle';
 
 export interface ShiftInput {
   date: string;
@@ -111,6 +111,12 @@ export async function updateShift(actor: AuthUser, shiftId: number, patch: Parti
  * rescheduled, refuse if that would double-book any of its volunteers, otherwise update the copies.
  */
 async function moveSignupsToNewTime(tx: PoolClient, shiftId: number, newRange: string): Promise<void> {
+  const volunteers = await tx.query<{ volunteer_id: number }>(
+    'SELECT volunteer_id FROM signups WHERE shift_id = $1 AND cancelled_at IS NULL',
+    [shiftId],
+  );
+  await lockVolunteerSchedules(tx, volunteers.rows.map((row) => row.volunteer_id));
+
   const { rows } = await tx.query<{ volunteer_name: string; program_name: string; date: string; start_time: string; ends_at: string }>(
     `SELECT u.name AS volunteer_name, p.name AS program_name, s.shift_date AS date,
             to_char(s.start_time, 'HH24:MI') AS start_time,
