@@ -169,7 +169,8 @@ function planShifts(): ShiftPlan[] {
   plans.push(
     { program: 'pantry', date: addDays(clock.today, 1), startTime: '11:00', durationMinutes: 180, location: 'Community Hall, Sector 14', headcount: 6, scenario: 'partial-alert' },
     { program: 'trail', date: addDays(clock.today, 2), startTime: '08:00', durationMinutes: 150, location: 'Damdama Lake, north bank', headcount: 5, scenario: 'open-alert' },
-    { program: 'tutoring', date: addDays(clock.today, 2), startTime: '10:30', durationMinutes: 120, location: 'Public Library, Room 2', headcount: 3, scenario: 'refilled-after-dismissal' },
+    // 14:00-16:00 overlaps no pattern or one-off shift on any weekday, so Asha can always be booked on it.
+    { program: 'tutoring', date: addDays(clock.today, 2), startTime: '14:00', durationMinutes: 120, location: 'Public Library, Room 2', headcount: 3, scenario: 'refilled-after-dismissal' },
     { program: 'pantry', date: addDays(clock.today, 3), startTime: '10:00', durationMinutes: 120, location: 'Pantry Warehouse, Gate 2', headcount: 4, scenario: 'dismissed-alert' },
   );
 
