@@ -7,7 +7,7 @@ There are two kinds of prompt below:
 1. **The prompts I typed** (and my answers to the agent's questions), quoted exactly.
 2. **The prompts the agent wrote for sub-agents** during the session (the parallel design review and test-writing). I didn't type these, but they shaped the code as much as anything I did, so they are included, shortened where marked.
 
-Every case where AI output was wrong is recorded with how it was caught and fixed. The commits named are in the history.
+Every case where AI output was wrong in a way that changed the design or the code is recorded with how it was caught and fixed. Quick slips, such as a test expecting the wrong Postgres error text, are not. The commits named are in the history.
 
 ---
 
@@ -21,7 +21,7 @@ Every case where AI output was wrong is recorded with how it was caught and fixe
 
 ### What I got
 
-The agent read every file (the brief, then README.md and now [docs/brief.md](brief.md); the SUBMISSION template; the five doc stubs) and checked my machine (Node 22.11, Docker installed but not running, GitHub CLI signed in). Instead of picking a stack itself, it asked me three questions, because the brief says to use what I'm most confident in and I'll be questioned on the code.
+The agent read every file (the brief, then README.md and now [docs/brief.md](brief.md); the SUBMISSION template; the five doc stubs) and checked my machine (Node 22.11, Docker installed but not running, GitHub CLI signed in). Instead of picking a stack itself, it asked me three multiple-choice questions, each with an option it marked as recommended (I chose the recommended option all three times), because the brief says to use what I'm most confident in and I'll be questioned on the code.
 
 ### My answers
 
@@ -80,11 +80,11 @@ The judge's prompt:
 - **"Signups made" counted only still-active signups**, so later cancellations would rewrite past weeks.
 - **Archiving could strand volunteers' upcoming signups**, hidden from them but still blocking their other bookings.
 - **A deleted shift's timeline would become unreadable.**
-- **The judge found a live bug** in code written meanwhile: the signups-per-week chart's weeks started 11 hours late (see section 5).
+- **The judge found a live bug** in code written meanwhile: the signups-per-week chart's weeks started 11 hours late (see 4c).
 
 ### What I corrected
 
-All 16 design changes went into `2f658a9` (and `ec3e568` for the chart). I verified the two database-level proposals myself before adopting them: the commit-time count trigger and the composite foreign key that keeps the copied time window in sync. The rejected items were mostly already handled (email case normalisation, cancel visibility order). The document-only items became [decisions.md](decisions.md) entries and its interpretations table.
+The design changes to code that already existed went into `2f658a9`. The rest were built in from the start in `11f6823` (alerts for everyone, "signups made" counting later-cancelled signups, the archive refusal), `315635a` (a reseedable demo) and `adee245` (the authorization matrix), and `ec3e568` fixed the chart. Before the two database-level proposals were adopted (the commit-time count trigger and the composite foreign key that keeps the copied time window in sync), the agent re-ran each against Postgres 17. The rejected items were mostly already handled (email case normalisation, cancel visibility order). The document-only items became [decisions.md](decisions.md) entries and its interpretations table.
 
 ---
 
@@ -148,7 +148,7 @@ Each agent owned one area: an authorization matrix (goal 1), programs and member
 - **NUL in search:** a NUL character in search text caused a 500.
 - **Off-by-one:** the 366-day generation limit allowed 367 days.
 
-The agents also listed about 40 spec questions (ambiguities in the brief).
+The agents also listed 48 spec questions (ambiguities in the brief).
 
 ### What I corrected
 

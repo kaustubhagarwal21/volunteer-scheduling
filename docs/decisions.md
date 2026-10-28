@@ -48,7 +48,7 @@ Each entry is a choice where a real alternative existed. Entries marked **Later 
 - **Rejected (originally chosen):** setting each database connection's `TimeZone` in `pool.on('connect')` so SQL could use `CURRENT_DATE` and `LOCALTIMESTAMP`.
 - **Later reversed** (commit `636c2c2`): two things changed my mind.
   1. node-postgres 8.23 printed a deprecation warning, because queueing a query on a client that is still running one (exactly what that hook does) is removed in pg 9.
-  2. Neon's pooled endpoint is PgBouncer in transaction mode, which doesn't keep per-session settings, so correctness would have depended on which connection string someone pasted.
+  2. The setting only held on connections that ran the hook. A seed or migration script with its own client, a psql session or a different pooler would silently use the database's default zone. Neon's default turned out to be GMT, so "today" would have been 5.5 hours off for an Indian organisation. I also expected Neon's pooled endpoint (PgBouncer in transaction mode) to drop the setting. The design review later showed it wouldn't for `TimeZone`, which PgBouncer tracks per client; my commit message for `636c2c2` overstates that point.
 
   The explicit clock also made the rule "the browser never computes today" easy: `/api/auth/me` returns the server's today.
 - **Related bug found later** (`ec3e568`): the signups-per-week chart still built its weeks with `generate_series` over dates. That silently returns `timestamptz` in the session's zone, so every bucket started at 11:00 IST instead of midnight. The rule now written in the code: a local date becomes an instant only through an explicit `date::timestamp AT TIME ZONE zone`.
@@ -63,9 +63,9 @@ Each entry is a choice where a real alternative existed. Entries marked **Later 
 
 - **Chose:** "understaffed" is computed at query time (Open or Partially Filled, dated today to today+3, not yet started). Each shift has one dismissal (`alert_dismissed_at`). Every signed-in user sees the alerts for the programs they can see; only coordinators dismiss. A dismissed alert returns only when a **cancellation** drops the shift out of Filled.
 - **Rejected:** a stored alerts table, or a scheduled job raising alerts. A job falls behind on a host that sleeps; a query is always current.
-- **Later reversed** (`2f658a9`), after the design review:
-  1. I had made the whole alerts area **coordinator-only**. The scenario says *"Anyone should be able to see which shifts are short-staffed"* and the goal restricts only *dismissing* to coordinators, so the alerts area and the badge are now shown to everyone, scoped to their programs.
-  2. I had also un-dismissed alerts on *any* drop out of Filled (a headcount increase) and on rescheduling. The brief singles out "when a dismissed alert is allowed to reappear" as one of the exact rules, and the brief names one trigger, a cancellation, so that is now the only one. Tests cover the cases that must *not* bring an alert back.
+- **Later reversed** after the design review (point 1 in `11f6823` and `31e8be9`, point 2 in `2f658a9`):
+  1. I had made the whole alerts area **coordinator-only** (in the client shell, `1577a9d`). The scenario says *"Anyone should be able to see which shifts are short-staffed"* and the goal restricts only *dismissing* to coordinators, so the alerts area and the badge are now shown to everyone, scoped to their programs.
+  2. I had also un-dismissed alerts on *any* drop out of Filled (a headcount increase) and on rescheduling. The brief singles out "when a dismissed alert is allowed to reappear" as one of the exact rules, and the brief names one trigger, a cancellation, so that is now the only one. Tests cover a headcount increase and a cancellation that only takes Partially Filled to Open, neither of which brings an alert back (rescheduling has no such test).
 
 ## Decision 10: Who may sign up or cancel, and until when
 
@@ -74,7 +74,7 @@ Each entry is a choice where a real alternative existed. Entries marked **Later 
 
 ## Decision 11: Archiving is refused while volunteers hold upcoming signups
 
-- **Chose:** archiving only sets `archived_at`, so restoring brings everything back. It is refused (409) while any not-yet-started shift in the program has active signups. Archived programs are read-only until restored.
+- **Chose:** archiving only sets `archived_at`, so restoring brings everything back. It is refused (409) while any not-yet-started shift in the program has active signups. Archived programs are frozen until restored: their shifts, notes, signups and members can't change (409 `PROGRAM_ARCHIVED`), though a coordinator can still edit the program's name and description.
 - **Rejected:** (a) cancelling those signups automatically: restore couldn't bring them back, and "without destroying its data" argues against it; (b) archiving anyway: the volunteers could no longer see their signups, yet those signups would still block overlapping ones elsewhere.
 - **Why:** nothing hidden is left holding a person's time.
 
@@ -87,9 +87,9 @@ Each entry is a choice where a real alternative existed. Entries marked **Later 
 
 - **Chose:** after drafting the design, five reviewer agents (literal compliance, concurrency, security, time handling, interview defensibility) attacked it independently, running SQL against a real Postgres, and a judge agent tried to refute each finding before I acted on it. After the features were built, six test agents each took one area of the brief and wrote integration tests against its exact rules, with instructions never to change application code or weaken an assertion.
 - **Rejected:** letting the same agent that wrote the code also judge or test it.
-- **Why:** a writer's tests share the writer's blind spots. The split found real problems: the membership race, the week-boundary bug, the existence leak, a 500 on a year-0000 date, and an off-by-one in the 366-day limit. The failing tests were committed as written (`adee245`) and fixed separately (`a29554b`), so the history shows what they caught.
+- **Why:** a writer's tests share the writer's blind spots. The split found real problems: the membership race, the week-boundary bug, the existence leak, a 500 on a year-0000 date, and an off-by-one in the 366-day limit. The failing tests were committed as written (`adee245`) and fixed separately (`a29554b`), so the history shows what they caught. `a29554b` also rewrote one passing assertion in `alerts.test.ts`, because refused dismissals now name their specific reason.
 
-## Decision 14: Charts drawn by hand in SVG
+## Decision 14: Charts drawn by hand (an SVG column chart and an HTML stacked bar)
 
 - **Chose:** two small components: a column chart and a stacked bar.
 - **Rejected:** a charting library.
@@ -97,11 +97,11 @@ Each entry is a choice where a real alternative existed. Entries marked **Later 
 
 ## Interpretations of the brief
 
-Where the brief was ambiguous, this is what the app does. Every row has tests.
+Where the brief was ambiguous, this is what the app does. Every row has tests, except that the future-start rule is tested only for generation, not for creating or rescheduling a single shift.
 
 | Brief says | The app does | Why |
 |---|---|---|
-| "a shift whose date is within the next three days" | Dated today through today+3 (calendar dates in the organisation's zone), and not yet started | "Date" suggests calendar days; once a shift has started nobody can sign up through the app, so an alert would be noise |
+| "a shift whose date is within the next three days" | Dated today through today+3 (calendar dates in the organisation's zone), and not yet started | "Date" suggests calendar days; once a shift has started, volunteers can no longer sign themselves up (only a coordinator can add a walk-in), so an alert would be noise |
 | "Once a shift's scheduled time has passed" | Close is allowed once the shift has **ended** (start + duration) | A shift in progress hasn't "passed" |
 | Closed locks "signups or cancellations" | Closed also locks edits and deletion | A closed shift is the record of what happened |
 | "this week" | Monday to Sunday in the organisation's zone | ISO week |

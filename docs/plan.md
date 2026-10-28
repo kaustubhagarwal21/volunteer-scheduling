@@ -2,7 +2,7 @@
 
 ## How the work was split into sessions
 
-The first build happened in **one evening session on 28 October 2026 (about 18:00–20:30 IST)**, working with Claude Code (an AI coding agent). It used parallel AI agents for independent design review and for writing tests. The session had distinct phases, and the git history shows them in order. Where several commits share a minute, I had written a stretch of work and then committed it as separate logical steps, in the order the work happened, rather than committing mid-stream. For example, the lifecycle API and the deadlock fix that its test exposed are two separate commits.
+The first build happened in **one evening session on 28 October 2026 (about 18:00–20:30 IST)**, working with Claude Code (an AI coding agent). It used parallel AI agents for independent design review and for writing tests. The session had distinct, partly overlapping phases, and the git history shows them in roughly this order (the scaffold `8973077` was committed 38 seconds before the schema `9f493ac`, and the seed before the verification tests). Where several commits share a minute, I had written a stretch of work and then committed it as separate logical steps, in the order the work happened, rather than committing mid-stream. For example, the lifecycle API and the deadlock fix that its test exposed are two separate commits.
 
 | Phase | Time (IST) | What happened |
 |---|---|---|
@@ -30,7 +30,7 @@ The first build happened in **one evening session on 28 October 2026 (about 18:0
 2. **Auth before features.** Every feature depends on knowing who is asking, and goal 1 must be enforced on the server.
 3. **The shift lifecycle before everything else.** Signups, cancellations, closing and the timeline are the core of the brief. The other features (dashboard, alerts, generation) read the data the lifecycle writes, so their correctness depends on it.
 4. **Tests next to the riskiest code.** The lifecycle tests were written alongside the lifecycle, including concurrency tests, and one of them found a real deadlock that only happens about 1 time in 12.
-5. **Independent verification before the UI.** The API was checked against every goal by agents that didn't write it, so the UI was built on a tested contract.
+5. **Independent verification before committing the UI.** Agents that didn't write the API tested goals 1, 2 and 5–10 while I built the pages (goals 3 and 4 were covered by the lifecycle tests written with the code), and the bugs they found were fixed (`a29554b`) before the pages were committed (`31e8be9`).
 6. **UI, seed, deployment, then docs.** The docs describe the system as it actually ended up, and their claims were fact-checked against the code.
 
 ## Estimate versus actual
@@ -39,7 +39,7 @@ The first build happened in **one evening session on 28 October 2026 (about 18:0
 - **What took longer than expected:** the design review took about 80 minutes of background time, the longest single step. That was because the reviewers actually ran concurrent SQL sessions against Postgres to prove race conditions rather than just reading the design. It was worth it: it found the membership race, which my own tests hadn't.
 - **What took less:** the CRUD-shaped parts (programs, members, finder) went quickly once the locking pattern in `shifts/lifecycle.ts` existed.
 - **Unplanned work:**
-  - **Node version.** Vite 7+/8 and Vitest 4+/5 require Node 22.12 and my machine has 22.11. I pinned Vite 6, Vitest 3, React Router 7 and TypeScript 5.9 instead of changing the machine's Node.
+  - **Node version.** Vite 7+, Vitest 5 and React Router 8 need a newer Node (22.12+, or 22.22+ for React Router 8) and my machine has 22.11. I pinned Vite 6, Vitest 3, React Router 7 and TypeScript 5.9 instead of changing the machine's Node.
   - **PowerShell quirks.** `git commit -m` mangled embedded quotes, so I switched to `git commit -F`. `npm.ps1` swallowed `--` arguments, so the seed's confirmation became an environment variable.
   - **Palette.** The first state colours failed a colour-vision check and were re-picked.
 
@@ -48,5 +48,5 @@ The first build happened in **one evening session on 28 October 2026 (about 18:0
 - **All stretch ideas.** The brief says the 10 goals are the cutoff and that doing them well beats doing more.
 - **Email of any kind** (reminders, password reset): it needs a mail provider and adds no goal.
 - **A screen for creating coordinators or changing roles:** coordinators come from the seed.
-- **Running the browser end-to-end checks in CI.** They exist as a local Playwright script I ran against the production build; CI runs the 265 API tests, the typecheck and the build.
+- **Running the browser end-to-end checks in CI.** They were run from a Playwright script kept outside the repository (it isn't committed) against the production build. CI runs all 265 server tests (integration tests against Postgres plus 14 pure unit tests), the typecheck and the build.
 - **Scaling work** I know how to do but didn't need: trigram indexes for search, keyset pagination, caching the alert badge (see [schema.md](schema.md#what-would-break-first-at-100-the-data)).

@@ -30,13 +30,13 @@ All other seeded volunteers (e.g. ben@demo.org) also use `volunteer123`. Anyone 
 | 1 Roles | Sign in as the volunteer: there is no "New program", "Add shift" or "Close". The API refuses those calls too (403), and other programs' shifts are a 404. |
 | 2 Programs | Coordinator → Programs → *Archived* tab shows *Monsoon Relief Collection*. Restore it: all its shifts and history come back. Try archiving *Community Food Pantry*: refused while volunteers hold upcoming signups. |
 | 3 Shifts | Open a program, *Add shift*; open a shift, *Edit details* or *Delete shift* (deleted shifts stay readable under the *Deleted* tab). |
-| 4 Lifecycle | As Asha, *My programs* → the 4:30 pm pantry restock on the same day as her 4:00 pm tutoring session → *Sign up*: refused, naming the overlap. Try a Filled shift: no button, and the API says why. As coordinator, open a finished shift and *Close shift*: it's locked from then on. |
+| 4 Lifecycle | As Asha, *My programs* → the 4:30 pm pantry restock on the same day as her 4:00 pm tutoring session → *Sign up*: refused, naming the overlap. Try a Filled shift you aren't on: no button, and the API says why (Asha is often on every Filled shift she can see; the other volunteers are firstname@demo.org with `volunteer123`). As coordinator, open a finished shift that isn't Closed yet (the seed closes all but the most recent one: *Shifts* → *Include past shifts*, *To date* = today, *Descending*) and *Close shift*: it's locked from then on. |
 | 5 Membership | Coordinator → a program → *Members*: add *Nikhil Jain*, then sign in as newcomer@demo.org to see the program appear. Removing a member cancels their upcoming signups there (shown on each shift's history). |
 | 6 Finding shifts | *Shifts*: search "library" or "pantry", filter by program, state and dates, sort by date, start time or fill state, page through. All server-side. |
 | 7 Recurring + CSV | A program → *Repeat weekly…*: the report lists created dates and skipped ones (holiday / a shift already exists). *Export roster (CSV)* gives every volunteer's hours. |
 | 8 Dashboard | The landing page: this week's numbers, signups per week (hover a column, or *Show as table*), and the breakdowns by fill state and by program. |
-| 9 History | Any shift page → *History*: creation, every state change (old → new), every signup and cancellation with who made it, notes. There is no way to edit or delete an entry, even in the database. |
-| 10 Alerts | The badge on *Alerts*. The Filled **10:30 am tutoring session** two days after the seed date had its alert dismissed while it was one short. As Asha, cancel her place on it (*My programs* → *Cancel my signup*): the alert comes back and the badge goes up. |
+| 9 History | Any shift page → *History*: creation, every state change (old → new), every signup and cancellation with who made it, notes. The app has no way to edit or delete an entry, and database triggers refuse UPDATE, DELETE and TRUNCATE on the history table (only the role that owns the table could disable them; see item 5 under "What would you do next"). |
+| 10 Alerts | The badge on *Alerts*. The Filled **2:00 pm tutoring session** two days after the seed date had its alert dismissed while it was one short. As Asha, cancel her place on it (*My programs* → *Cancel my signup*), or as coordinator open it and *Cancel* any signup: the alert comes back and the badge goes up. |
 
 ## Run it locally
 
@@ -51,25 +51,25 @@ npm run dev                           # API on :3000, app on http://localhost:51
 npm test                              # 265 tests against the volunteer_test database
 ```
 
-To reseed the deployed database (this wipes it), run `npm run seed` with `DATABASE_URL` set to its connection string and `ALLOW_REMOTE_RESET=yes`.
+To reseed the deployed database (this wipes it), run `npm run seed` with `DATABASE_URL` set to its connection string and `ALLOW_REMOTE_RESET=yes`. Use Neon's direct connection string (not the `-pooler` one) for both the app and the seed.
 
 ## Stack
 
 | Layer | What I used | Why |
 |---|---|---|
-| Frontend | React 19, Vite 6, React Router 7, TanStack Query, Tailwind CSS 4; charts hand-drawn in SVG | Familiar, fast to build; TanStack Query keeps server data fresh after every change |
-| Backend | Node 22, Express 5, TypeScript, zod, node-postgres (plain SQL), bcrypt | Explicit SQL: the key rules are Postgres features (generated column, exclusion constraint, triggers, row locks) |
+| Frontend | React 19, Vite 6, React Router 7, TanStack Query, Tailwind CSS 4; charts hand-drawn (an SVG column chart and HTML/CSS bars, no chart library) | Familiar, fast to build; TanStack Query keeps server data fresh after every change |
+| Backend | Node 22, Express 5, TypeScript, zod, node-postgres (plain SQL), bcryptjs | Explicit SQL: the key rules are Postgres features (generated column, exclusion constraint, triggers, row locks) |
 | Database | PostgreSQL 17 | Generated columns, `EXCLUDE` constraints, deferred constraint triggers, transactional DDL |
-| Hosting | Render (one free web service: API + built SPA, same origin) and Neon (free Postgres) | Same origin means a first-party session cookie and no CORS; Neon doesn't pause or expire like other free Postgres tiers |
+| Hosting | Render (one free web service: API + built SPA, same origin) and Neon (free Postgres) | Same origin means a first-party session cookie and no CORS; Neon suspends an idle database but wakes it on the next connection in about a second, and doesn't pause the project or expire like Supabase's and Render's free Postgres |
 
 ## Goal checklist
 
 | # | Goal | Status | Notes |
 |---|---|---|---|
-| 1 | Accounts and roles | Done | Email and password; server-side sessions; deny-by-default auth; an authorization matrix test covers every route for every role |
+| 1 | Accounts and roles | Done | Email and password; server-side sessions; deny-by-default auth; an authorization matrix test covers every route signed out and as a volunteer, and every coordinator-only route as a coordinator |
 | 2 | Programs | Done | Create, edit, archive and restore; archiving hides without touching data; refused while upcoming signups exist (see decisions) |
 | 3 | Shifts inside programs | Done | Create, edit, delete (soft: history kept); opening a program lists its shifts |
-| 4 | Lifecycle with rules | Done | Fill state is a generated column; over-filling and double-booking are impossible even under concurrent requests (tested); every illegal move is a 409 with a reason |
+| 4 | Lifecycle with rules | Done | Fill state is a generated column; over-filling and double-booking are impossible even under concurrent requests (tested); every illegal lifecycle move (Filled, Closed, overlap, already started, not yet over) is a 409 with a reason, and trying to set the fill state directly is a 400 that explains why |
 | 5 | Program membership | Done | Coordinators add and remove; members only; "My programs" is the one list |
 | 6 | Finding shifts | Done | Search, filters, three sorts, pagination with total, all in SQL |
 | 7 | Recurring schedule + CSV | Done | Report of created and skipped dates (holiday / already exists); roster CSV with total hours |
@@ -88,7 +88,7 @@ The initial build was **one AI-assisted session of about 2.5 hours** on 28 Octob
 1. **Email:** shift reminders the day before, and password reset (both need a mail provider).
 2. **A waitlist for Filled shifts** that offers the spot automatically when someone cancels. The cancellation path is already the single place where that would hook in.
 3. **Scale the read paths:** trigram indexes for search, keyset pagination, a windowed dashboard (see the 100× section of [docs/schema.md](docs/schema.md)).
-4. **Run the browser end-to-end checks in CI** (they exist as a local Playwright script).
+4. **Run browser end-to-end checks in CI** (a Playwright script was run by hand during the build, but it isn't in the repository yet).
 5. **A low-privilege database role** for the server, so even the app's own credentials can't disable the history triggers.
 6. **An accessibility pass** with a screen reader, and a dedicated mobile layout for the shift tables.
 
