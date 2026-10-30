@@ -170,4 +170,9 @@ _To fill in after my review: what I rewrote in my own words, and anything I'd de
 
 ## What I did myself
 
-_To fill in honestly: which parts I read line by line, what I changed, what I tested by hand on the live site, and what I would still need to ask about._
+- **Decided** the three things put to me at the start (section 1): the stack, plain SQL with migrations instead of an ORM, and building with a commit after each step. I also approved publishing the repository on GitHub.
+- **Set up the database:** created the Neon database. I pasted its connection string into the chat so the agent could seed it, so that password needs to be reset after the review.
+- **Deployed it on Render:** Render couldn't see the repository at first, so I gave Render's GitHub app access to it, created the Blueprint from `render.yaml`, and pasted `DATABASE_URL` (ending in `sslmode=verify-full`) into Render's settings myself.
+- **Tested the live site:** went through the "Try this" steps in SUBMISSION.md as coordinator and as volunteer, and registered a new volunteer account and tested it. The demo data was reseeded afterwards, so reviewers see it unchanged.
+- **Read** the code and these docs, with a walkthrough of the code and an interview study guide.
+- **Still want to go deeper on:** the database rules that stop double-booking and over-filling: the row locks, the exclusion constraint and the triggers.

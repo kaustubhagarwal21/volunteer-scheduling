@@ -81,7 +81,7 @@ Interpretations of ambiguous wording are listed in [docs/decisions.md](docs/deci
 
 ## How much time did you actually spend?
 
-The initial build was **one AI-assisted session on 28 October 2026: about 2 hours 20 minutes of building (18:00–20:20 IST), then about 30 minutes for a fact-check of the docs and fixes**, plus one small UI fix at 22:15 (Claude Code, with parallel AI agents for design review and tests; see [docs/plan.md](docs/plan.md) and [docs/ai-prompts.md](docs/ai-prompts.md)). After that, my own time reading and understanding the code, deploying, and rewriting the docs: _to be filled in_.
+The initial build was **one AI-assisted session on 28 October 2026: about 2 hours 20 minutes of building (18:00–20:20 IST), then about 30 minutes for a fact-check of the docs and fixes**, plus one small UI fix at 22:15 (Claude Code, with parallel AI agents for design review and tests; see [docs/plan.md](docs/plan.md) and [docs/ai-prompts.md](docs/ai-prompts.md)). After that came my own time: reading the code and docs with a walkthrough and an interview study guide, deploying on Render, and testing the live site. **In total, about 12 hours across 28–30 October, including the build session.**
 
 ## What would you do next, with another 12 hours?
 

@@ -24,7 +24,7 @@ The first build happened in **one evening session on 28 October 2026 (about 18:0
 
 | Date | Hours | What I did |
 |---|---|---|
-| _to fill in_ | | |
+| 28–30 Oct | About 9 (about 12 in total with the build session) | Read the code and these docs with a walkthrough and the interview study guide. Deployed on Render: gave Render's GitHub app access to the repository, created the Blueprint from `render.yaml` and set `DATABASE_URL`. Tested the live site: the "Try this" steps in SUBMISSION.md as coordinator and as volunteer, plus a newly registered volunteer account (the demo data was reseeded afterwards). |
 
 ## Build order, and why that order
 
