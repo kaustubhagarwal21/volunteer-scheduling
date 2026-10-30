@@ -176,3 +176,67 @@ I rewrote the "What would you do next" section of SUBMISSION.md in my own words.
 - **Tested the live site:** went through the "Try this" steps in SUBMISSION.md as coordinator and as volunteer, and registered a new volunteer account and tested it. I raced two volunteers for the last spot on a shift from two browser windows: one got the spot and the other was refused because the shift was full. I also watched the browser's Network tab while changing the shift filters: every change sent a new request to `/api/shifts`, so the filtering happens on the server. The demo data was reseeded afterwards, so reviewers see it unchanged.
 - **Read** the code and these docs, with a walkthrough of the code and an interview study guide.
 - **Still want to go deeper on:** the database rules that stop double-booking and over-filling: the row locks, the exclusion constraint and the triggers.
+
+---
+
+## What I'd do differently next time
+
+My first prompt was one line (section 1), so the agent made most of the design decisions and I studied the code afterwards. If I started again, this is the prompt I would give. It was not used for this build.
+
+```text
+Build the complete project described in @README.md, following the rules in @CLAUDE.md. Work in the stages below, in order. After each numbered step: run lint, typecheck and tests, show me the real output, then commit with a conventional message and goal tag (e.g. "feat(signups): reject overlapping signups across programs [G4]"). Never squash, amend, rebase or force-push.
+
+Whenever there is a real choice or the brief is ambiguous, STOP and ask me with 2-3 options and trade-offs. Don't decide for me. After I answer, remind me to run /decision. Never write reasons into docs/decisions.md that I didn't give.
+
+My strongest languages/frameworks: <FILL IN>. Use PostgreSQL. Propose a stack that fits these and ask me to confirm before Stage 1.
+
+STAGE 1 - Foundations
+1. Draft docs/plan.md: six sessions, goals per session, estimate in hours, risks, why this order. Leave an empty "Actual" column.
+2. Design the schema and show it to me before writing migrations. Requirements:
+   - Fill state (open / partially_filled / filled) is derived from active signups vs required headcount and can never be set by hand.
+   - Signups can never exceed headcount, even under simultaneous requests. One active signup per volunteer per shift.
+   - A volunteer can't hold signups for overlapping shifts in ANY program (overlap: a.start < b.end and b.start < a.end; back-to-back is allowed; shifts may cross midnight).
+   - Append-only shift_events table; UPDATE and DELETE on it must fail at the database level. Deleting a shift must not delete its history.
+   - Alert dismissals stored; whether an alert shows is derived.
+   - One org timezone.
+   Write docs/schema.md: tables, columns, types, one-to-many vs many-to-many, which rules live in the DB vs the app, what's denormalised.
+3. Scaffold: server + web, lint/format/typecheck, .env.example (never touch .env), SQL migrations, a clock module (domain code gets "now" only from it, tests can freeze it), GET /health, integration tests against a real Postgres, a pre-commit hook, GitHub Actions CI with a Postgres service.
+4. Prepare deployment on free tiers (propose: Neon + Render + Vercel with /api proxied through the frontend, or a single Render service; let me choose). Add a "waking the server" banner for cold starts. Give me click-by-click dashboard steps; I enter all secrets myself and never paste them here.
+
+STAGE 2 - Goals 1, 2, 5 (tests first, one test per rule, named after the rule)
+- Email + password login, hashed passwords, generic error on bad credentials. Roles: coordinator and volunteer.
+- Coordinators: create/edit/archive/restore programs, create/edit/delete shifts, add/remove members, sign up or cancel any volunteer, close shifts.
+- Volunteers: sign up/cancel only themselves, only in programs they belong to, and only see their programs. Everything enforced on the server with { code, message } errors; the UI only hides what the server already refuses.
+- Archiving hides a program from default views without destroying anything.
+- Membership is many-to-many; only coordinators manage it; a volunteer sees one list of all their programs and their shifts.
+- Generate docs/permissions.md (endpoint x role -> status) and curl commands proving server-side enforcement in docs/architecture.md.
+- Ask me: 404 vs 403 for non-members; signups on archived programs; duplicate membership; removing a member who has future signups.
+
+STAGE 3 - Goals 3, 4, 9
+- Shift: program, date, start time, duration, location, required headcount. Opening a program shows its shifts.
+- Write the state machine table (action x state -> result or error) into docs/architecture.md first.
+- One domain service; each action in one transaction: lock, check rule, write, re-derive fill state, append timeline events.
+- Signup only when Open or Partially Filled, never Filled or Closed, never overlapping another of the volunteer's signups. Cancel by the volunteer or a coordinator re-derives state. Coordinator closes a shift only after its scheduled time has passed; Closed locks signups and cancellations. Every other move is rejected with a clear message.
+- Timeline per shift: created, every fill-state change (old -> new), every signup and cancellation with who did it, coordinator notes. Nothing editable or deletable, by anyone.
+- Concurrency tests: 10 simultaneous signups for 3 spots -> exactly 3 succeed; one volunteer signing up for overlapping shifts in two programs at once -> exactly 1 succeeds. Run them 20 times.
+- Ask me: actions after a shift starts but before close; lowering headcount below current signups; editing a shift so it now overlaps; editing a Closed shift; deleting a shift with signups.
+- UI: shift lists with "2 of 3 filled" and a text fill-state badge; coordinator and volunteer actions; shift page with timeline and notes; errors shown inline.
+
+STAGE 4 - Goals 6, 7
+- GET /shifts across every program the viewer can see: text search over program name and location (escape % and _), filters for program, fill state and date range, sort by date, start time or fill state (whitelisted, tie-break on id), pagination returning the total. All in SQL. UI keeps state in the URL and shows "21-40 of 137".
+- Recurring generator: date range, weekday, start time, duration, location, headcount, excluded holiday dates, dry run. Report created shifts and skipped dates with reason (holiday or already_exists). All-or-nothing; unique index prevents duplicates. Ask me for a range limit.
+- Roster CSV per program: each volunteer with total hours from active signups. Proper escaping, formula-injection guard, UTF-8 BOM. Ask me what counts as hours.
+
+STAGE 5 - Goals 8, 10
+- Dashboard: shifts this week, open shifts this week, signups made this week, shifts closed this week; breakdown by fill state and by program; signups per week for the last 8 weeks (empty weeks = 0). Confirm the definitions with me first. Tests use a frozen clock.
+- Understaffed alerts: shift date within the next 3 days and Open or Partially Filled. Coordinators can dismiss. If a cancellation later drops a Filled shift back to Open or Partially Filled within those 3 days, the alert returns. Count badge in the navigation. Derive alerts from current state + timeline + dismissals, no stored flags. Ask me the edge cases.
+- Idempotent seed script relative to today: 2 coordinators, 10 volunteers, 4 programs (1 archived), shifts from 8 weeks ago to 6 weeks ahead created through the real generator and domain service, understaffed shifts in the next 3 days, one dismissed alert, one Filled shift ready to demo the alert returning. Put demo credentials in SUBMISSION.md. Ask me before seeding the deployed database.
+
+STAGE 6 - Finish
+- Self-audit: docs/traceability.md mapping every rule in the brief to the code or constraint enforcing it, the test proving it, and where to see it in the UI. List gaps, then fix each with a failing test first.
+- Generate 100x data locally, run EXPLAIN ANALYZE on the shift search, dashboard, alert count and roster, and write the real findings into docs/schema.md.
+- Complete docs/architecture.md, schema.md, plan.md, decisions.md and ai-prompts.md so each stub question is answered. Ask me for actual times and which AI outputs were wrong; don't invent either.
+- Complete SUBMISSION.md: live URL, repo URL, demo credentials per role, the cold-start note, a 5-minute reviewer tour, known limitations, what I'd do next. Claim nothing the tests don't prove.
+
+Start now with Stage 1, step 1, then stop and wait for me.
+```
