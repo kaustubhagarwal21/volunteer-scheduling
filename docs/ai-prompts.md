@@ -15,9 +15,28 @@ Every case where AI output was wrong in a way that changed the design or the cod
 
 ### Prompt (mine, verbatim)
 
-> read the full folder and make help me make this project and also understand so that i clear this round
->
-> *(followed by the pasted email from BUSY Infotech announcing the take-home)*
+I've got BUSY Infotech's take-home #18 (their email is pasted below). The folder has the brief
+(README.md), the SUBMISSION.md template and five doc stubs in docs/.
+
+1. Read every file first. Then ask me the choices that are mine to make (the stack, how the
+   server talks to the database, how to pace the work), each with your recommendation.
+2. Build the whole app so it meets all 10 goals. Commit after each meaningful step, with a
+   message that says what changed and why.
+3. Put the rules that protect the data (no over-filling, no double-booking, a history nobody can
+   edit) in the database where you can, and test every rule against a real Postgres, including
+   simultaneous requests.
+4. Have separate agents attack the design while you build, and apply what holds up. When the
+   features are done, have other agents write extra tests against the brief's exact rules.
+   None of them may change the code. Record what they found and how it was fixed.
+5. Prepare it for free hosting, with CI. I'll do the deployment myself.
+6. Then fill in SUBMISSION.md and the five docs from what actually happened, including each time
+   your output was wrong in a way that changed the design or the code. Keep secrets out of the repo.
+7. Finally, walk me through the code and give me a study guide, because in the follow-up call I
+   must explain every decision and commit myself.
+
+[the pasted email]
+
+
 
 ### What I got
 
@@ -181,7 +200,7 @@ I rewrote the "What would you do next" section of SUBMISSION.md in my own words.
 
 ## What I'd do differently next time
 
-My first prompt was one line (section 1), so the agent made most of the design decisions and I studied the code afterwards. If I started again, this is the prompt I would give. It was not used for this build.
+If I started again, this is the prompt I would give. It was not used for this build.
 
 ```text
 Build the complete project described in @README.md, following the rules in @CLAUDE.md. Work in the stages below, in order. After each numbered step: run lint, typecheck and tests, show me the real output, then commit with a conventional message and goal tag (e.g. "feat(signups): reject overlapping signups across programs [G4]"). Never squash, amend, rebase or force-push.
