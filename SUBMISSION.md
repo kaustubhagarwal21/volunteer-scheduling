@@ -35,7 +35,7 @@ All other seeded volunteers (e.g. ben@demo.org) also use `volunteer123`. Anyone 
 | 6 Finding shifts | *Shifts*: search "library" or "pantry", filter by program, state and dates, sort by date, start time or fill state, page through. All server-side. |
 | 7 Recurring + CSV | A program → *Repeat weekly…*: the report lists created dates and skipped ones (holiday / a shift already exists). *Export roster (CSV)* gives every volunteer's hours. |
 | 8 Dashboard | The landing page: this week's numbers, signups per week (hover a column, or *Show as table*), and the breakdowns by fill state and by program. |
-| 9 History | Any shift page → *History*: creation, every state change (old → new), every signup and cancellation with who made it, notes. The app has no way to edit or delete an entry, and database triggers refuse UPDATE, DELETE and TRUNCATE on the history table (only the role that owns the table could disable them; see item 5 under "What would you do next"). |
+| 9 History | Any shift page → *History*: creation, every state change (old → new), every signup and cancellation with who made it, notes. The app has no way to edit or delete an entry, and database triggers refuse UPDATE, DELETE and TRUNCATE on the history table (only the role that owns the table could disable them). |
 | 10 Alerts | The badge on *Alerts*. The Filled **2:00 pm tutoring session** two days after the seed date had its alert dismissed while it was one short. As Asha, cancel her place on it (*My programs* → *Cancel my signup*), or as coordinator open it and *Cancel* any signup: the alert comes back and the badge goes up. |
 
 ## Run it locally
@@ -85,12 +85,10 @@ The initial build was **one AI-assisted session on 28 October 2026: about 2 hour
 
 ## What would you do next, with another 12 hours?
 
-1. **Email:** shift reminders the day before, and password reset (both need a mail provider).
-2. **A waitlist for Filled shifts** that offers the spot automatically when someone cancels. The cancellation path is already the single place where that would hook in.
-3. **Scale the read paths:** trigram indexes for search, keyset pagination, a windowed dashboard (see the 100× section of [docs/schema.md](docs/schema.md)).
-4. **Run browser end-to-end checks in CI** (a Playwright script was run by hand during the build, but it isn't in the repository yet).
-5. **A low-privilege database role** for the server, so even the app's own credentials can't disable the history triggers.
-6. **An accessibility pass** with a screen reader, and a dedicated mobile layout for the shift tables.
+1. **A waitlist for full shifts.** When I tested two volunteers competing for the last spot, the one who lost just got an error. A queue would hold them and automatically give them the spot if someone cancels.
+2. **An automatic daily reseed of the demo data,** so the live demo always shows fresh, current data, including when I present it in the interview.
+3. **A health check for the database,** so it shows whether the Neon database is running fine, not only whether the server is up.
+4. **Rate limiting in Cloudflare, before requests reach Render,** by putting the site behind my own Cloudflare account and domain, so repeated login attempts are blocked before they reach the app.
 
 ## What are you least happy with in this codebase, and why?
 

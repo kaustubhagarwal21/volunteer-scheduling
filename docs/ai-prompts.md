@@ -164,7 +164,7 @@ The agent drafted these five docs from the session's actual history. A separate 
 
 ### What I corrected
 
-_To fill in after my review: what I rewrote in my own words, and anything I'd decide differently._
+I rewrote the "What would you do next" section of SUBMISSION.md in my own words.
 
 ---
 
