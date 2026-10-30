@@ -2,13 +2,13 @@
 
 ## Links
 
-- **GitHub repository:** _to be added_
-- **Live application:** _to be added_
+- **GitHub repository:** https://github.com/kaustubhagarwal21/volunteer-scheduling
+- **Live application:** https://volunteer-scheduling-sbu3.onrender.com
 
 ## Notes for the reviewer
 
 - **The first load can take about a minute.** The app runs on Render's free tier, which sleeps after 15 idle minutes. The page and the API are one service, so the very first request wakes it; after that it's fast. The database (Neon) wakes in about a second.
-- **Demo data is relative to the day it was seeded** (alerts look three days ahead; the dashboard shows "this week"). It was last seeded on _date to be added_. If it looks stale, `npm run seed` against the database refreshes it (see "Run it locally").
+- **Demo data is relative to the day it was seeded** (alerts look three days ahead; the dashboard shows "this week"). It was last seeded on 30 October 2026. If it looks stale, `npm run seed` against the database refreshes it (see "Run it locally").
 - **Every refused move explains why.** Try the illegal ones; the server's reason appears as a message at the bottom of the screen.
 - Shift times are the organisation's local time (Asia/Kolkata).
 
